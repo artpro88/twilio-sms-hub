@@ -23,10 +23,28 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 # Import modules
 from database import create_tables, get_db, SMSMessage, BulkSMSJob, WebhookLog
-from models.sms import (
-    SMSRequest, SMSResponse, BulkSMSRequest, BulkSMSResponse,
-    SMSStatus, BulkSMSJobStatus, WebhookPayload, SMSStats
-)
+try:
+    from models.sms import (
+        SMSRequest, SMSResponse, BulkSMSRequest, BulkSMSResponse,
+        SMSStatus, BulkSMSJobStatus, WebhookPayload, SMSStats
+    )
+except ImportError as e:
+    logger.error(f"Failed to import models: {e}")
+    # Define minimal models as fallback
+    from pydantic import BaseModel
+    from typing import Optional
+
+    class SMSResponse(BaseModel):
+        success: bool
+        message: str
+        message_sid: Optional[str] = None
+        cost: Optional[float] = None
+
+    class BulkSMSResponse(BaseModel):
+        success: bool
+        message: str
+        job_id: Optional[str] = None
+        total_count: Optional[int] = None
 from pydantic import BaseModel, validator
 from services.twilio_service import TwilioService
 from services.csv_processor import CSVProcessor
@@ -447,6 +465,32 @@ async def test_csv_processing(file: UploadFile = File(...)):
         logger.error(f"Test CSV error: {error_details}")
         return {"success": False, "error_details": error_details}
 
+@app.get("/api/test/bulk-status")
+async def test_bulk_status():
+    """Test bulk SMS endpoint status"""
+    try:
+        return {
+            "success": True,
+            "is_configured": is_configured(),
+            "has_csv_processor": csv_processor is not None,
+            "has_twilio_service": twilio_service is not None,
+            "uploads_dir_exists": os.path.exists("uploads"),
+            "current_config": {
+                "sender_type": current_config.get('sender_type'),
+                "has_account_sid": bool(current_config.get('account_sid')),
+                "has_auth_token": bool(current_config.get('auth_token')),
+                "has_phone_number": bool(current_config.get('phone_number')),
+                "has_sender_id": bool(current_config.get('sender_id')),
+            }
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
 @app.post("/api/sms/send", response_model=SMSResponse)
 async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
     """Send a single SMS message"""
@@ -536,40 +580,42 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
             message=f"Server error: {error_msg} | Type: {type(e).__name__} | Traceback available in logs"
         )
 
-@app.post("/api/sms/bulk", response_model=BulkSMSResponse)
+@app.post("/api/sms/bulk")
 async def send_bulk_sms(
     file: UploadFile = File(...),
     message_template: str = Form(...),
     db: Session = Depends(get_db)
 ):
     """Send bulk SMS from CSV file"""
-    logger.info(f"Bulk SMS request received. File: {file.filename}, Template: {message_template[:50]}...")
-
-    # Check if Twilio is configured (outside try block)
-    if not is_configured():
-        logger.error("Bulk SMS failed: Twilio not configured")
-        return BulkSMSResponse(
-            success=False,
-            message="Twilio not configured. Please configure Twilio credentials first."
-        )
-
-    if not csv_processor:
-        logger.error("Bulk SMS failed: CSV processor not initialized")
-        return BulkSMSResponse(
-            success=False,
-            message="CSV processor not available. Please restart the application."
-        )
-
-    # Validate file type
-    if not file.filename.endswith('.csv'):
-        logger.error(f"Bulk SMS failed: Invalid file type {file.filename}")
-        return BulkSMSResponse(
-            success=False,
-            message="Only CSV files are allowed"
-        )
-
     try:
-        
+        logger.info(f"Bulk SMS request received. File: {file.filename}, Template: {message_template[:50]}...")
+
+        # Check if Twilio is configured
+        if not is_configured():
+            logger.error("Bulk SMS failed: Twilio not configured")
+            return {
+                "success": False,
+                "message": "Twilio not configured. Please configure Twilio credentials first."
+            }
+
+        if not csv_processor:
+            logger.error("Bulk SMS failed: CSV processor not initialized")
+            return {
+                "success": False,
+                "message": "CSV processor not available. Please restart the application."
+            }
+
+        # Validate file type
+        if not file.filename or not file.filename.endswith('.csv'):
+            logger.error(f"Bulk SMS failed: Invalid file type {file.filename}")
+            return {
+                "success": False,
+                "message": "Only CSV files are allowed"
+            }
+
+        # Ensure uploads directory exists
+        os.makedirs("uploads", exist_ok=True)
+
         # Save uploaded file
         file_path = f"uploads/{uuid.uuid4()}_{file.filename}"
         logger.info(f"Saving uploaded file to: {file_path}")
@@ -585,22 +631,25 @@ async def send_bulk_sms(
         result = await csv_processor.process_bulk_sms(file_path, message_template, db)
         logger.info(f"Bulk SMS processing result: {result}")
 
-        if result["success"]:
-            return BulkSMSResponse(
-                success=True,
-                job_id=result["job_id"],
-                message=result["message"],
-                total_count=result["total_count"]
-            )
+        if result.get("success"):
+            return {
+                "success": True,
+                "job_id": result["job_id"],
+                "message": result["message"],
+                "total_count": result["total_count"]
+            }
         else:
             # Clean up file if processing failed
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup file {file_path}: {cleanup_error}")
 
-            return BulkSMSResponse(
-                success=False,
-                message=result.get("error", "Failed to process bulk SMS")
-            )
+            return {
+                "success": False,
+                "message": result.get("error", "Failed to process bulk SMS")
+            }
     except Exception as e:
         import traceback
         error_msg = str(e) if str(e) else "Unknown error occurred during bulk SMS processing"
@@ -612,13 +661,13 @@ async def send_bulk_sms(
         try:
             if 'file_path' in locals() and os.path.exists(file_path):
                 os.remove(file_path)
-        except:
-            pass
+        except Exception as cleanup_error:
+            logger.warning(f"Cleanup error: {cleanup_error}")
 
-        return BulkSMSResponse(
-            success=False,
-            message=f"Server error during bulk SMS processing: {error_msg}"
-        )
+        return {
+            "success": False,
+            "message": f"Server error during bulk SMS processing: {error_msg}"
+        }
 
 @app.get("/api/sms/history", response_model=List[SMSStatus])
 async def get_sms_history(
