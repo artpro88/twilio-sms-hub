@@ -438,6 +438,10 @@
                             <i class="fas fa-rocket me-1"></i>
                             Launch Campaign
                         </button>
+                        <button type="button" class="btn btn-warning ms-2" onclick="troubleshootBulkSMS()">
+                            <i class="fas fa-bug me-1"></i>
+                            Troubleshoot
+                        </button>
                     </form>
 
                     <div id="bulk-result" class="mt-3"></div>
@@ -686,6 +690,77 @@
 
             toast.addEventListener('hidden.bs.toast', () => {
                 toast.remove();
+            });
+        }
+
+        function troubleshootBulkSMS() {
+            const fileInput = document.getElementById('csv-file');
+            const messageTemplate = document.getElementById('message-template').value;
+
+            if (!fileInput.files[0]) {
+                alert('Please select a CSV file first');
+                return;
+            }
+
+            if (!messageTemplate) {
+                alert('Please enter a message template');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('message_template', messageTemplate);
+
+            // Show loading
+            const resultDiv = document.getElementById('bulk-result');
+            resultDiv.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-spinner fa-spin me-2"></i>
+                    Running comprehensive troubleshooting...
+                </div>
+            `;
+
+            fetch('/api/troubleshoot/bulk-sms', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Display detailed troubleshooting results
+                let html = '<div class="card"><div class="card-header"><h5>Bulk SMS Troubleshooting Report</h5></div><div class="card-body">';
+
+                html += `<p><strong>Timestamp:</strong> ${data.timestamp}</p>`;
+                html += `<p><strong>Final Diagnosis:</strong> <span class="badge bg-${data.final_diagnosis.includes('working') ? 'success' : 'danger'}">${data.final_diagnosis}</span></p>`;
+
+                if (data.recommendations && data.recommendations.length > 0) {
+                    html += '<h6>Recommendations:</h6><ul>';
+                    data.recommendations.forEach(rec => {
+                        html += `<li>${rec}</li>`;
+                    });
+                    html += '</ul>';
+                }
+
+                html += '<h6>Detailed Steps:</h6>';
+                data.steps.forEach(step => {
+                    const badgeClass = step.status === 'success' ? 'bg-success' : step.status === 'warning' ? 'bg-warning' : 'bg-danger';
+                    html += `
+                        <div class="mb-2">
+                            <span class="badge ${badgeClass}">${step.status.toUpperCase()}</span>
+                            <strong>${step.step}:</strong> ${step.details}
+                            ${step.data ? `<details class="mt-1"><summary>View Data</summary><pre>${JSON.stringify(step.data, null, 2)}</pre></details>` : ''}
+                        </div>
+                    `;
+                });
+
+                html += '</div></div>';
+                resultDiv.innerHTML = html;
+            })
+            .catch(error => {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        <strong>Troubleshooting Error:</strong> ${error.message}
+                    </div>
+                `;
             });
         }
 
