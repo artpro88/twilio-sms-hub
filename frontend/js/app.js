@@ -98,8 +98,14 @@ class SMSApp {
             });
         }
 
-        // Bulk SMS wizard
-        this.setupBulkSMSListeners();
+        // Bulk SMS form
+        const bulkForm = document.getElementById('bulk-sms-form');
+        if (bulkForm) {
+            bulkForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.sendBulkSMS();
+            });
+        }
 
         // History controls
         this.setupHistoryListeners();

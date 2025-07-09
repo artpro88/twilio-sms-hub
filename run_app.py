@@ -409,6 +409,43 @@ async def test_sms_simple(request: dict):
         logger.error(f"Test SMS error: {error_details}")
         return {"success": False, "error_details": error_details}
 
+@app.post("/api/test/csv")
+async def test_csv_processing(file: UploadFile = File(...)):
+    """Test CSV processing without sending SMS"""
+    try:
+        logger.info(f"Test CSV upload: {file.filename}")
+
+        # Save uploaded file
+        file_path = f"uploads/test_{uuid.uuid4()}_{file.filename}"
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        logger.info(f"Test file saved: {file_path}, size: {len(content)} bytes")
+
+        # Validate CSV
+        if csv_processor:
+            validation_result = csv_processor.validate_csv_file(file_path)
+            logger.info(f"CSV validation result: {validation_result}")
+
+            # Clean up test file
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            return {"success": True, "validation": validation_result}
+        else:
+            return {"success": False, "error": "CSV processor not available"}
+
+    except Exception as e:
+        import traceback
+        error_details = {
+            "error": str(e),
+            "type": type(e).__name__,
+            "traceback": traceback.format_exc()
+        }
+        logger.error(f"Test CSV error: {error_details}")
+        return {"success": False, "error_details": error_details}
+
 @app.post("/api/sms/send", response_model=SMSResponse)
 async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
     """Send a single SMS message"""
@@ -505,23 +542,48 @@ async def send_bulk_sms(
     db: Session = Depends(get_db)
 ):
     """Send bulk SMS from CSV file"""
+    logger.info(f"Bulk SMS request received. File: {file.filename}, Template: {message_template[:50]}...")
+
+    # Check if Twilio is configured (outside try block)
+    if not is_configured():
+        logger.error("Bulk SMS failed: Twilio not configured")
+        return BulkSMSResponse(
+            success=False,
+            message="Twilio not configured. Please configure Twilio credentials first."
+        )
+
+    if not csv_processor:
+        logger.error("Bulk SMS failed: CSV processor not initialized")
+        return BulkSMSResponse(
+            success=False,
+            message="CSV processor not available. Please restart the application."
+        )
+
+    # Validate file type
+    if not file.filename.endswith('.csv'):
+        logger.error(f"Bulk SMS failed: Invalid file type {file.filename}")
+        return BulkSMSResponse(
+            success=False,
+            message="Only CSV files are allowed"
+        )
+
     try:
-        # Check if Twilio is configured
-        if not is_configured() or not csv_processor:
-            raise HTTPException(status_code=400, detail="Twilio not configured. Please configure Twilio credentials first.")
-        # Validate file type
-        if not file.filename.endswith('.csv'):
-            raise HTTPException(status_code=400, detail="Only CSV files are allowed")
         
         # Save uploaded file
         file_path = f"uploads/{uuid.uuid4()}_{file.filename}"
+        logger.info(f"Saving uploaded file to: {file_path}")
+
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
-        
+
+        logger.info(f"File saved successfully. Size: {len(content)} bytes")
+
         # Process bulk SMS
+        logger.info("Starting bulk SMS processing...")
         result = await csv_processor.process_bulk_sms(file_path, message_template, db)
-        
+        logger.info(f"Bulk SMS processing result: {result}")
+
         if result["success"]:
             return BulkSMSResponse(
                 success=True,
@@ -533,11 +595,11 @@ async def send_bulk_sms(
             # Clean up file if processing failed
             if os.path.exists(file_path):
                 os.remove(file_path)
-            
-            raise HTTPException(status_code=400, detail=result.get("error", "Failed to process bulk SMS"))
-            
-    except HTTPException:
-        raise
+
+            return BulkSMSResponse(
+                success=False,
+                message=result.get("error", "Failed to process bulk SMS")
+            )
     except Exception as e:
         logger.error(f"Error processing bulk SMS: {e}")
         raise HTTPException(status_code=500, detail=str(e))
