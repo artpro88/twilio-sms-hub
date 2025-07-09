@@ -506,6 +506,76 @@ async def test_bulk_sms_direct(request: dict):
             "traceback": traceback.format_exc()
         }
 
+@app.post("/api/test/simulate-bulk")
+async def simulate_bulk_sms(request: dict, db: Session = Depends(get_db)):
+    """Simulate bulk SMS processing without CSV file"""
+    try:
+        phone_number = request.get('phone_number', '+447960858925')
+        message_template = request.get('message_template', 'Hello {name}, test {custom_field}')
+
+        # Simulate recipient data (like what comes from CSV)
+        recipients = [
+            {
+                "phone_number": phone_number,
+                "name": "TestUser",
+                "custom_field": "123"
+            }
+        ]
+
+        logger.info(f"Simulating bulk SMS to {phone_number}")
+
+        # Check services
+        if not twilio_service:
+            return {"success": False, "error": "Twilio service not available"}
+
+        if not csv_processor:
+            return {"success": False, "error": "CSV processor not available"}
+
+        # Ensure CSV processor has current service
+        csv_processor.twilio_service = twilio_service
+
+        # Simulate the exact same process as bulk SMS
+        results = []
+        for recipient in recipients:
+            try:
+                # Format phone number (same as CSV processor)
+                formatted_number = csv_processor._format_phone_number(recipient["phone_number"])
+
+                # Personalize message (same as CSV processor)
+                personalized_message = csv_processor._personalize_message(message_template, recipient)
+
+                # Send SMS using CSV processor's service
+                result = csv_processor.twilio_service.send_sms(formatted_number, personalized_message)
+
+                results.append({
+                    "recipient": recipient,
+                    "formatted_number": formatted_number,
+                    "personalized_message": personalized_message,
+                    "sms_result": result
+                })
+
+            except Exception as e:
+                results.append({
+                    "recipient": recipient,
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                })
+
+        return {
+            "success": True,
+            "results": results,
+            "csv_processor_service_available": csv_processor.twilio_service is not None,
+            "same_as_global_service": csv_processor.twilio_service is twilio_service
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
 @app.post("/api/test/sms")
 async def test_sms_simple(request: dict):
     """Simple SMS test endpoint for debugging"""
