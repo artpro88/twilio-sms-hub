@@ -205,7 +205,9 @@ class CSVProcessor:
 
             # Process SMS sending in background
             logger.info(f"Starting background SMS processing for job: {job_id}")
-            asyncio.create_task(self._send_bulk_sms(job_id, valid_numbers, message_template, db))
+            # Ensure we pass the current twilio service to the background task
+            current_service = self.twilio_service
+            asyncio.create_task(self._send_bulk_sms(job_id, valid_numbers, message_template, db, current_service))
             
             return {
                 "success": True,
@@ -221,30 +223,59 @@ class CSVProcessor:
                 "error": str(e)
             }
     
-    async def _send_bulk_sms(self, job_id: str, recipients: List[Dict], message_template: str, db: Session):
+    async def _send_bulk_sms(self, job_id: str, recipients: List[Dict], message_template: str, db: Session, twilio_service=None):
         """
         Send bulk SMS messages (background task)
-        
+
         Args:
             job_id: Bulk SMS job ID
             recipients: List of recipient data
             message_template: SMS message template
             db: Database session
+            twilio_service: Optional twilio service to use
         """
         sent_count = 0
         failed_count = 0
         
         try:
+            logger.info(f"Starting bulk SMS job {job_id} with {len(recipients)} recipients")
+
+            # Use passed service or fallback to instance service
+            if twilio_service:
+                self.twilio_service = twilio_service
+                logger.info("Using passed twilio service")
+
+            logger.info(f"Twilio service available: {self.twilio_service is not None}")
+
             # Check if Twilio service is available
             if not self.twilio_service:
-                logger.error("Twilio service not available for bulk SMS")
-                # Update job status to failed
-                job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
-                if job:
-                    job.status = BulkSMSJobStatus.FAILED
-                    job.error_message = "Twilio service not available"
-                    db.commit()
-                return
+                logger.error("Twilio service not available for bulk SMS - attempting to get global service")
+
+                # Try to get the global twilio service from the main app
+                try:
+                    import sys
+                    if 'run_app' in sys.modules:
+                        run_app_module = sys.modules['run_app']
+                        global_twilio_service = getattr(run_app_module, 'twilio_service', None)
+                        if global_twilio_service:
+                            self.twilio_service = global_twilio_service
+                            logger.info("Successfully obtained global twilio service")
+                        else:
+                            logger.error("Global twilio service is also None")
+                    else:
+                        logger.error("run_app module not found in sys.modules")
+                except Exception as e:
+                    logger.error(f"Could not import global twilio service: {e}")
+
+                # If still no service, fail the job
+                if not self.twilio_service:
+                    logger.error("No Twilio service available for bulk SMS")
+                    job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
+                    if job:
+                        job.status = BulkSMSJobStatus.FAILED
+                        job.error_message = "Twilio service not available"
+                        db.commit()
+                    return
 
             for recipient in recipients:
                 try:
