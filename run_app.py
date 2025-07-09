@@ -576,6 +576,274 @@ async def simulate_bulk_sms(request: dict, db: Session = Depends(get_db)):
             "traceback": traceback.format_exc()
         }
 
+@app.post("/api/troubleshoot/bulk-sms")
+async def troubleshoot_bulk_sms(file: UploadFile = File(...), message_template: str = Form(...), db: Session = Depends(get_db)):
+    """Comprehensive troubleshooting for bulk SMS - runs through entire process with detailed reporting"""
+
+    troubleshoot_report = {
+        "timestamp": datetime.now().isoformat(),
+        "steps": [],
+        "final_diagnosis": "",
+        "recommendations": []
+    }
+
+    def add_step(step_name, status, details, data=None):
+        troubleshoot_report["steps"].append({
+            "step": step_name,
+            "status": status,  # "success", "warning", "error"
+            "details": details,
+            "data": data
+        })
+
+    try:
+        # Step 1: Check basic configuration
+        add_step("Configuration Check",
+                "success" if is_configured() else "error",
+                f"Twilio configured: {is_configured()}, Has twilio_service: {twilio_service is not None}, Has csv_processor: {csv_processor is not None}")
+
+        if not is_configured():
+            troubleshoot_report["final_diagnosis"] = "Twilio not configured"
+            troubleshoot_report["recommendations"] = ["Configure Twilio credentials in the Configuration tab"]
+            return troubleshoot_report
+
+        # Step 2: File validation
+        if not file.filename.endswith('.csv'):
+            add_step("File Validation", "error", f"Invalid file type: {file.filename}")
+            troubleshoot_report["final_diagnosis"] = "Invalid file type"
+            return troubleshoot_report
+
+        add_step("File Validation", "success", f"Valid CSV file: {file.filename}")
+
+        # Step 3: Save and read file
+        os.makedirs("uploads", exist_ok=True)
+        file_path = f"uploads/troubleshoot_{uuid.uuid4()}_{file.filename}"
+
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        add_step("File Upload", "success", f"File saved: {file_path}, Size: {len(content)} bytes")
+
+        # Step 4: Read and analyze CSV content
+        try:
+            import pandas as pd
+            df = pd.read_csv(file_path)
+            add_step("CSV Reading", "success", f"CSV read successfully. Columns: {list(df.columns)}, Rows: {len(df)}", {
+                "columns": list(df.columns),
+                "row_count": len(df),
+                "sample_data": df.head(3).to_dict('records') if len(df) > 0 else []
+            })
+        except Exception as e:
+            add_step("CSV Reading", "error", f"Failed to read CSV: {str(e)}")
+            troubleshoot_report["final_diagnosis"] = "CSV file format error"
+            return troubleshoot_report
+
+        # Step 5: CSV validation using processor
+        if csv_processor:
+            csv_processor.twilio_service = twilio_service  # Ensure current service
+            validation_result = csv_processor.validate_csv_file(file_path)
+
+            add_step("CSV Validation",
+                    "success" if validation_result.get("success") else "error",
+                    f"Validation result: {validation_result}",
+                    validation_result)
+
+            if not validation_result.get("success"):
+                troubleshoot_report["final_diagnosis"] = "CSV validation failed"
+                troubleshoot_report["recommendations"] = [
+                    "Check CSV format: must have 'phone_number' column",
+                    "Ensure phone numbers are valid",
+                    "Check for proper CSV encoding"
+                ]
+                return troubleshoot_report
+        else:
+            add_step("CSV Validation", "error", "CSV processor not available")
+            troubleshoot_report["final_diagnosis"] = "CSV processor not initialized"
+            return troubleshoot_report
+
+        # Step 6: Test individual SMS sending
+        valid_numbers = validation_result.get("valid_numbers", [])
+        if valid_numbers:
+            test_recipient = valid_numbers[0]
+
+            # Test phone number formatting
+            formatted_number = csv_processor._format_phone_number(test_recipient["phone_number"])
+            add_step("Phone Formatting", "success", f"Original: {test_recipient['phone_number']} → Formatted: {formatted_number}")
+
+            # Test message personalization
+            personalized_message = csv_processor._personalize_message(message_template, test_recipient)
+            add_step("Message Personalization", "success", f"Template: '{message_template}' → Result: '{personalized_message}'")
+
+            # Test actual SMS sending
+            try:
+                sms_result = twilio_service.send_sms(formatted_number, personalized_message)
+                add_step("SMS Test",
+                        "success" if sms_result.get("success") else "error",
+                        f"SMS test result: {sms_result}",
+                        sms_result)
+
+                if not sms_result.get("success"):
+                    troubleshoot_report["final_diagnosis"] = "SMS sending failed"
+                    troubleshoot_report["recommendations"] = [
+                        f"Twilio error: {sms_result.get('error_message', 'Unknown error')}",
+                        "Check phone number format",
+                        "Verify Twilio account balance",
+                        "Check sender ID configuration"
+                    ]
+                    return troubleshoot_report
+
+            except Exception as e:
+                add_step("SMS Test", "error", f"SMS test exception: {str(e)}")
+                troubleshoot_report["final_diagnosis"] = "SMS service error"
+                return troubleshoot_report
+
+        # Step 7: Database test
+        try:
+            # Test creating a job record
+            test_job = BulkSMSJob(
+                job_id="test_" + str(uuid.uuid4()),
+                filename=file.filename,
+                total_count=len(valid_numbers),
+                message_template=message_template,
+                status="testing"
+            )
+            db.add(test_job)
+            db.commit()
+
+            # Test creating SMS message record
+            test_message = SMSMessage(
+                message_sid="test_sid",
+                from_number="test_from",
+                to_number=formatted_number,
+                message_body=personalized_message,
+                status="test",
+                direction="outbound"
+            )
+            db.add(test_message)
+            db.commit()
+
+            # Clean up test records
+            db.delete(test_job)
+            db.delete(test_message)
+            db.commit()
+
+            add_step("Database Test", "success", "Database operations successful")
+
+        except Exception as e:
+            add_step("Database Test", "error", f"Database error: {str(e)}")
+            troubleshoot_report["final_diagnosis"] = "Database error"
+            return troubleshoot_report
+
+        # Step 8: Full process simulation
+        try:
+            # Simulate the exact bulk SMS process
+            job_id = "troubleshoot_" + str(uuid.uuid4())
+
+            bulk_job = BulkSMSJob(
+                job_id=job_id,
+                filename=file.filename,
+                total_count=len(valid_numbers),
+                message_template=message_template,
+                status="processing"
+            )
+            db.add(bulk_job)
+            db.commit()
+
+            sent_count = 0
+            failed_count = 0
+            message_results = []
+
+            for recipient in valid_numbers[:2]:  # Test first 2 only
+                try:
+                    phone_number = csv_processor._format_phone_number(recipient["phone_number"])
+                    message_body = csv_processor._personalize_message(message_template, recipient)
+
+                    result = twilio_service.send_sms(phone_number, message_body)
+
+                    # Create SMS message record
+                    sms_message = SMSMessage(
+                        message_sid=result.get("message_sid"),
+                        from_number=result.get("from_number", ""),
+                        to_number=phone_number,
+                        message_body=message_body,
+                        status=result.get("status", "failed"),
+                        direction="outbound",
+                        cost=float(result.get("price", 0)) if result.get("price") else None,
+                        error_code=result.get("error_code"),
+                        error_message=result.get("error_message")
+                    )
+                    db.add(sms_message)
+
+                    if result.get("success"):
+                        sent_count += 1
+                    else:
+                        failed_count += 1
+
+                    message_results.append({
+                        "recipient": recipient,
+                        "formatted_number": phone_number,
+                        "message": message_body,
+                        "result": result
+                    })
+
+                except Exception as e:
+                    failed_count += 1
+                    message_results.append({
+                        "recipient": recipient,
+                        "error": str(e)
+                    })
+
+            # Update job status
+            bulk_job.status = "completed"
+            bulk_job.sent_count = sent_count
+            bulk_job.failed_count = failed_count
+            bulk_job.completed_at = datetime.now()
+            db.commit()
+
+            add_step("Full Process Test", "success", f"Process completed. Sent: {sent_count}, Failed: {failed_count}", {
+                "job_id": job_id,
+                "sent_count": sent_count,
+                "failed_count": failed_count,
+                "message_results": message_results
+            })
+
+            if failed_count > 0:
+                troubleshoot_report["final_diagnosis"] = "Some messages failed during full process test"
+                troubleshoot_report["recommendations"] = [
+                    "Check individual message results in the data section",
+                    "Verify phone numbers are valid and reachable",
+                    "Check Twilio account status and balance"
+                ]
+            else:
+                troubleshoot_report["final_diagnosis"] = "All systems working correctly"
+                troubleshoot_report["recommendations"] = [
+                    "Bulk SMS should work normally",
+                    "If still having issues, check Railway logs for background task errors"
+                ]
+
+        except Exception as e:
+            add_step("Full Process Test", "error", f"Full process failed: {str(e)}")
+            troubleshoot_report["final_diagnosis"] = "Full process simulation failed"
+
+        # Cleanup
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except:
+            pass
+
+        return troubleshoot_report
+
+    except Exception as e:
+        import traceback
+        add_step("Troubleshooting Error", "error", f"Troubleshooting itself failed: {str(e)}")
+        troubleshoot_report["final_diagnosis"] = "Troubleshooting system error"
+        troubleshoot_report["error_details"] = {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+        return troubleshoot_report
+
 @app.post("/api/test/sms")
 async def test_sms_simple(request: dict):
     """Simple SMS test endpoint for debugging"""
