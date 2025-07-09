@@ -116,15 +116,21 @@ def initialize_services():
     global twilio_service, csv_processor
 
     # Update environment variables
-    if current_config['account_sid']:
+    if current_config.get('account_sid'):
         os.environ['TWILIO_ACCOUNT_SID'] = current_config['account_sid']
-    if current_config['auth_token']:
+    if current_config.get('auth_token'):
         os.environ['TWILIO_AUTH_TOKEN'] = current_config['auth_token']
-    if current_config['sender_type']:
+    if current_config.get('sender_type'):
         os.environ['TWILIO_SENDER_TYPE'] = current_config['sender_type']
-    if current_config['phone_number']:
+
+    # Clear both sender environment variables first
+    os.environ.pop('TWILIO_PHONE_NUMBER', None)
+    os.environ.pop('TWILIO_SENDER_ID', None)
+
+    # Set the appropriate sender based on type
+    if current_config.get('sender_type') == 'phone' and current_config.get('phone_number'):
         os.environ['TWILIO_PHONE_NUMBER'] = current_config['phone_number']
-    if current_config['sender_id']:
+    elif current_config.get('sender_type') == 'alphanumeric' and current_config.get('sender_id'):
         os.environ['TWILIO_SENDER_ID'] = current_config['sender_id']
 
     try:
@@ -366,8 +372,12 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=500, detail="Twilio service not available. Please restart the application.")
 
         logger.info(f"Sending SMS to {sms_request.to_number}")
+        logger.info(f"Current config: {current_config}")
+        logger.info(f"Twilio service initialized: {twilio_service is not None}")
+
         # Send SMS via Twilio
         result = twilio_service.send_sms(sms_request.to_number, sms_request.message_body)
+        logger.info(f"SMS send result: {result}")
         
         # Store in database
         sms_message = SMSMessage(

@@ -23,16 +23,30 @@ class TwilioService:
         self.from_number = os.getenv("TWILIO_PHONE_NUMBER")
         self.sender_id = os.getenv("TWILIO_SENDER_ID")
 
+        logger.info(f"Initializing TwilioService with sender_type: {self.sender_type}")
+        logger.info(f"Phone number: {'***' if self.from_number else 'None'}")
+        logger.info(f"Sender ID: {'***' if self.sender_id else 'None'}")
+
         # Determine the appropriate sender
         if self.sender_type == "phone":
             self.from_value = self.from_number
         else:
             self.from_value = self.sender_id
 
-        if not all([self.account_sid, self.auth_token, self.from_value]):
-            raise ValueError("Missing Twilio configuration. Please check your environment variables.")
+        logger.info(f"Using from_value: {'***' if self.from_value else 'None'}")
+
+        if not self.account_sid:
+            raise ValueError("Missing TWILIO_ACCOUNT_SID environment variable")
+        if not self.auth_token:
+            raise ValueError("Missing TWILIO_AUTH_TOKEN environment variable")
+        if not self.from_value:
+            if self.sender_type == "phone":
+                raise ValueError("Missing TWILIO_PHONE_NUMBER environment variable for phone sender type")
+            else:
+                raise ValueError("Missing TWILIO_SENDER_ID environment variable for alphanumeric sender type")
 
         self.client = Client(self.account_sid, self.auth_token)
+        logger.info("TwilioService initialized successfully")
     
     def send_sms(self, to_number: str, message_body: str) -> Dict[str, Any]:
         """
