@@ -170,14 +170,19 @@ class CSVProcessor:
         """
         try:
             # Validate CSV file first
+            logger.info(f"Starting CSV validation for file: {file_path}")
             validation_result = self.validate_csv_file(file_path)
-            
+            logger.info(f"CSV validation completed: {validation_result}")
+
             if not validation_result["success"]:
+                logger.error(f"CSV validation failed: {validation_result}")
                 return validation_result
-            
+
             valid_numbers = validation_result["valid_numbers"]
-            
+            logger.info(f"Found {len(valid_numbers)} valid numbers: {[v['phone_number'] for v in valid_numbers]}")
+
             if not valid_numbers:
+                logger.error("No valid phone numbers found in CSV file")
                 return {
                     "success": False,
                     "error": "No valid phone numbers found in CSV file"
@@ -185,6 +190,7 @@ class CSVProcessor:
             
             # Create bulk SMS job
             job_id = str(uuid.uuid4())
+            logger.info(f"Creating bulk SMS job with ID: {job_id}")
             bulk_job = BulkSMSJob(
                 job_id=job_id,
                 filename=file_path.split('/')[-1],
@@ -192,11 +198,13 @@ class CSVProcessor:
                 message_template=message_template,
                 status="processing"
             )
-            
+
             db.add(bulk_job)
             db.commit()
-            
+            logger.info(f"Bulk SMS job created successfully: {job_id}")
+
             # Process SMS sending in background
+            logger.info(f"Starting background SMS processing for job: {job_id}")
             asyncio.create_task(self._send_bulk_sms(job_id, valid_numbers, message_template, db))
             
             return {
