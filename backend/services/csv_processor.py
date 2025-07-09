@@ -63,9 +63,12 @@ class CSVProcessor:
             for index, row in df.iterrows():
                 phone_number = str(row['phone_number']).strip()
                 if self._validate_phone_number(phone_number):
+                    # Format the phone number to E164 format with + prefix
+                    formatted_number = self._format_phone_number(phone_number)
                     valid_numbers.append({
                         "row": index + 1,
-                        "phone_number": phone_number,
+                        "phone_number": formatted_number,
+                        "original_phone_number": phone_number,
                         "name": row.get('name', ''),
                         "custom_field": row.get('custom_field', '')
                     })
@@ -96,45 +99,61 @@ class CSVProcessor:
     def _validate_phone_number(self, phone_number: str) -> bool:
         """
         Validate individual phone number
-        
+
         Args:
             phone_number: Phone number to validate
-            
+
         Returns:
             Boolean indicating if phone number is valid
         """
         try:
             # Remove any non-digit characters except +
             cleaned = re.sub(r'[^\d+]', '', phone_number)
-            
+
+            # Add + prefix if missing (assume international format)
+            if not cleaned.startswith('+'):
+                cleaned = '+' + cleaned
+
             # Parse the phone number
             parsed = phonenumbers.parse(cleaned, None)
-            
+
             # Check if it's valid
             return phonenumbers.is_valid_number(parsed)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Phone number validation failed for {phone_number}: {e}")
             return False
     
     def _format_phone_number(self, phone_number: str) -> str:
         """
         Format phone number to E164 format
-        
+
         Args:
             phone_number: Phone number to format
-            
+
         Returns:
             Formatted phone number in E164 format
         """
         try:
             # Remove any non-digit characters except +
             cleaned = re.sub(r'[^\d+]', '', phone_number)
-            
+
+            # Add + prefix if missing (assume international format)
+            if not cleaned.startswith('+'):
+                cleaned = '+' + cleaned
+                logger.info(f"Added + prefix to phone number: {phone_number} -> {cleaned}")
+
             # Parse the phone number
             parsed = phonenumbers.parse(cleaned, None)
-            
+
             # Return in E164 format
-            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
-        except Exception:
+            formatted = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+            logger.info(f"Formatted phone number: {phone_number} -> {formatted}")
+            return formatted
+        except Exception as e:
+            logger.warning(f"Phone number formatting failed for {phone_number}: {e}")
+            # If formatting fails, at least ensure + prefix
+            if not phone_number.startswith('+'):
+                return '+' + re.sub(r'[^\d]', '', phone_number)
             return phone_number
     
     async def process_bulk_sms(self, file_path: str, message_template: str, db: Session) -> Dict[str, Any]:

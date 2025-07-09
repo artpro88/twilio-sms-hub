@@ -408,7 +408,12 @@
                                     <input type="file" class="form-control" id="csv-file" accept=".csv" required>
                                     <div class="form-text">
                                         <i class="fas fa-info-circle me-1"></i>
-                                        Required column: phone_number. Optional: name, custom_field
+                                        Required column: phone_number. Optional: name, custom_field<br>
+                                        <i class="fas fa-plus-circle me-1 text-success"></i>
+                                        <strong>Auto-fix:</strong> Missing '+' country code prefixes will be added automatically<br>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="downloadSampleCSV()">
+                                            <i class="fas fa-download me-1"></i>Download Sample CSV
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -638,6 +643,49 @@
                 });
             }).catch(function(err) {
                 console.error('Could not copy text: ', err);
+            });
+        }
+
+        function downloadSampleCSV() {
+            // Create sample CSV content with your example data
+            const csvContent = `phone_number,name,custom_field
+447960858925,Artur,50
+447538982387,Alina,250
+1234567890,John Doe,100
+44123456789,Jane Smith,75`;
+
+            // Create blob and download
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'sample_bulk_sms.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+
+            // Show success message
+            const toast = document.createElement('div');
+            toast.className = 'toast align-items-center text-white bg-info border-0';
+            toast.setAttribute('role', 'alert');
+            toast.innerHTML = `
+                <div class="d-flex">
+                    <div class="toast-body">
+                        <i class="fas fa-download me-2"></i>Sample CSV downloaded! Note: + prefixes will be added automatically.
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            `;
+
+            const toastContainer = document.getElementById('toast-container');
+            toastContainer.appendChild(toast);
+
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+
+            toast.addEventListener('hidden.bs.toast', () => {
+                toast.remove();
             });
         }
 
