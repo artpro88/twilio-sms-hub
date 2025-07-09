@@ -454,6 +454,54 @@ async def reload_config():
             "message": f"Failed to reload configuration: {str(e)}"
         }
 
+@app.post("/api/test/bulk-sms-direct")
+async def test_bulk_sms_direct(request: dict):
+    """Test bulk SMS with direct service call"""
+    try:
+        phone_number = request.get('phone_number')
+        message = request.get('message', 'Test bulk SMS message')
+
+        if not phone_number:
+            return {"success": False, "error": "phone_number required"}
+
+        logger.info(f"Testing bulk SMS direct call to {phone_number}")
+
+        # Check services
+        if not twilio_service:
+            return {"success": False, "error": "Twilio service not available"}
+
+        if not csv_processor:
+            return {"success": False, "error": "CSV processor not available"}
+
+        # Test if CSV processor has the same service
+        csv_service_available = csv_processor.twilio_service is not None
+        same_service = csv_processor.twilio_service is twilio_service
+
+        # Try sending with both services
+        single_result = twilio_service.send_sms(phone_number, message + " (single)")
+
+        if csv_processor.twilio_service:
+            bulk_result = csv_processor.twilio_service.send_sms(phone_number, message + " (bulk)")
+        else:
+            bulk_result = {"success": False, "error": "CSV processor has no Twilio service"}
+
+        return {
+            "success": True,
+            "phone_number": phone_number,
+            "csv_service_available": csv_service_available,
+            "same_service_instance": same_service,
+            "single_sms_result": single_result,
+            "bulk_sms_result": bulk_result
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
 @app.post("/api/test/sms")
 async def test_sms_simple(request: dict):
     """Simple SMS test endpoint for debugging"""

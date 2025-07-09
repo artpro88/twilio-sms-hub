@@ -247,8 +247,10 @@ class CSVProcessor:
                     message_body = self._personalize_message(message_template, recipient)
 
                     # Send SMS
+                    logger.info(f"Sending SMS to {phone_number} with message: {message_body[:50]}...")
                     result = self.twilio_service.send_sms(phone_number, message_body)
-                    
+                    logger.info(f"SMS result for {phone_number}: {result}")
+
                     # Create SMS message record
                     sms_message = SMSMessage(
                         message_sid=result.get("message_sid"),
@@ -261,13 +263,15 @@ class CSVProcessor:
                         error_code=result.get("error_code"),
                         error_message=result.get("error_message")
                     )
-                    
+
                     db.add(sms_message)
-                    
-                    if result["success"]:
+
+                    if result.get("success"):
                         sent_count += 1
+                        logger.info(f"SMS sent successfully to {phone_number}")
                     else:
                         failed_count += 1
+                        logger.error(f"SMS failed to {phone_number}: {result.get('error_message', 'Unknown error')}")
                     
                     # Rate limiting - wait 1 second between messages
                     time.sleep(1)
