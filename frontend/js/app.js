@@ -595,6 +595,18 @@ class SMSApp {
                 body: formData
             });
 
+            // Check if response is ok and contains JSON
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                const errorText = await response.text();
+                throw new Error(`Server returned non-JSON response: ${errorText.substring(0, 200)}...`);
+            }
+
             const result = await response.json();
 
             if (result.success) {

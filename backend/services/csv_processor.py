@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 class CSVProcessor:
     """Service class for processing CSV files for bulk SMS"""
     
-    def __init__(self):
-        self.twilio_service = TwilioService()
+    def __init__(self, twilio_service=None):
+        self.twilio_service = twilio_service
     
     def validate_csv_file(self, file_path: str) -> Dict[str, Any]:
         """
@@ -227,14 +227,25 @@ class CSVProcessor:
         failed_count = 0
         
         try:
+            # Check if Twilio service is available
+            if not self.twilio_service:
+                logger.error("Twilio service not available for bulk SMS")
+                # Update job status to failed
+                job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
+                if job:
+                    job.status = BulkSMSJobStatus.FAILED
+                    job.error_message = "Twilio service not available"
+                    db.commit()
+                return
+
             for recipient in recipients:
                 try:
                     # Format phone number
                     phone_number = self._format_phone_number(recipient["phone_number"])
-                    
+
                     # Personalize message template
                     message_body = self._personalize_message(message_template, recipient)
-                    
+
                     # Send SMS
                     result = self.twilio_service.send_sms(phone_number, message_body)
                     

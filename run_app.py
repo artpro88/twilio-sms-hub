@@ -135,10 +135,11 @@ def initialize_services():
 
     try:
         twilio_service = TwilioService()
-        csv_processor = CSVProcessor()
+        csv_processor = CSVProcessor(twilio_service)
         return True
     except Exception as e:
         logger.error(f"Failed to initialize services: {e}")
+        logger.exception("Service initialization error:")
         return False
 
 def is_configured():
@@ -601,8 +602,23 @@ async def send_bulk_sms(
                 message=result.get("error", "Failed to process bulk SMS")
             )
     except Exception as e:
-        logger.error(f"Error processing bulk SMS: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_msg = str(e) if str(e) else "Unknown error occurred during bulk SMS processing"
+        full_traceback = traceback.format_exc()
+        logger.error(f"Error processing bulk SMS: {error_msg}")
+        logger.error(f"Full traceback: {full_traceback}")
+
+        # Clean up file if it exists
+        try:
+            if 'file_path' in locals() and os.path.exists(file_path):
+                os.remove(file_path)
+        except:
+            pass
+
+        return BulkSMSResponse(
+            success=False,
+            message=f"Server error during bulk SMS processing: {error_msg}"
+        )
 
 @app.get("/api/sms/history", response_model=List[SMSStatus])
 async def get_sms_history(
