@@ -7,6 +7,7 @@ This file can be run directly without import issues
 import os
 import sys
 import uuid
+import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -92,14 +93,46 @@ class ConfigResponse(BaseModel):
     balance: Optional[str] = None
     currency: Optional[str] = None
 
+# Configuration file path
+CONFIG_FILE = "twilio_config.json"
+
+def load_config():
+    """Load configuration from file or environment variables"""
+    config = {}
+
+    # Try to load from file first
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+            logger.info("Configuration loaded from file")
+        except Exception as e:
+            logger.warning(f"Failed to load config from file: {e}")
+
+    # Fallback to environment variables if file doesn't exist or is empty
+    if not config:
+        config = {
+            'account_sid': os.getenv('TWILIO_ACCOUNT_SID'),
+            'auth_token': os.getenv('TWILIO_AUTH_TOKEN'),
+            'sender_type': os.getenv('TWILIO_SENDER_TYPE', 'phone'),
+            'phone_number': os.getenv('TWILIO_PHONE_NUMBER'),
+            'sender_id': os.getenv('TWILIO_SENDER_ID')
+        }
+        logger.info("Configuration loaded from environment variables")
+
+    return config
+
+def save_config_to_file(config):
+    """Save configuration to file"""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        logger.info("Configuration saved to file")
+    except Exception as e:
+        logger.error(f"Failed to save config to file: {e}")
+
 # Global configuration storage
-current_config = {
-    'account_sid': os.getenv('TWILIO_ACCOUNT_SID'),
-    'auth_token': os.getenv('TWILIO_AUTH_TOKEN'),
-    'sender_type': os.getenv('TWILIO_SENDER_TYPE', 'phone'),
-    'phone_number': os.getenv('TWILIO_PHONE_NUMBER'),
-    'sender_id': os.getenv('TWILIO_SENDER_ID')
-}
+current_config = load_config()
 
 # Create FastAPI app
 app = FastAPI(
@@ -271,6 +304,9 @@ async def save_config(config: TwilioConfig):
             current_config['sender_id'] = config.sender_id
             current_config['phone_number'] = None
 
+        # Save configuration to file for persistence
+        save_config_to_file(current_config)
+
         # Reinitialize services
         if initialize_services():
             return ConfigResponse(
@@ -368,12 +404,14 @@ async def get_config_status():
     return {
         "is_configured": is_configured(),
         "has_twilio_service": twilio_service is not None,
+        "config_file_exists": os.path.exists(CONFIG_FILE),
         "current_config": {
             "has_account_sid": bool(current_config.get('account_sid')),
             "has_auth_token": bool(current_config.get('auth_token')),
             "sender_type": current_config.get('sender_type'),
             "has_phone_number": bool(current_config.get('phone_number')),
             "has_sender_id": bool(current_config.get('sender_id')),
+            "account_sid_preview": current_config.get('account_sid', '')[:8] + "..." if current_config.get('account_sid') else None,
         },
         "environment_vars": {
             "TWILIO_ACCOUNT_SID": bool(os.getenv('TWILIO_ACCOUNT_SID')),
@@ -391,6 +429,30 @@ async def simple_test():
         return {"status": "ok", "message": "API is working"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.post("/api/config/reload")
+async def reload_config():
+    """Reload configuration from file and reinitialize services"""
+    try:
+        global current_config
+        current_config = load_config()
+
+        if initialize_services():
+            return {
+                "success": True,
+                "message": "Configuration reloaded and services reinitialized",
+                "is_configured": is_configured()
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Configuration reloaded but service initialization failed"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to reload configuration: {str(e)}"
+        }
 
 @app.post("/api/test/sms")
 async def test_sms_simple(request: dict):
