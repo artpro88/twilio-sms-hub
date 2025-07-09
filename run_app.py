@@ -477,6 +477,10 @@ async def test_bulk_sms_direct(request: dict):
         csv_service_available = csv_processor.twilio_service is not None
         same_service = csv_processor.twilio_service is twilio_service
 
+        # Ensure CSV processor has current service
+        if csv_processor and twilio_service:
+            csv_processor.twilio_service = twilio_service
+
         # Try sending with both services
         single_result = twilio_service.send_sms(phone_number, message + " (single)")
 
@@ -736,8 +740,15 @@ async def send_bulk_sms(
 
         logger.info(f"File saved successfully. Size: {len(content)} bytes")
 
+        # Ensure CSV processor has the current twilio_service
+        if csv_processor and twilio_service:
+            csv_processor.twilio_service = twilio_service
+            logger.info("Updated CSV processor with current Twilio service")
+
         # Process bulk SMS
         logger.info("Starting bulk SMS processing...")
+        logger.info(f"CSV processor service available: {csv_processor.twilio_service is not None}")
+        logger.info(f"Global twilio service available: {twilio_service is not None}")
         result = await csv_processor.process_bulk_sms(file_path, message_template, db)
         logger.info(f"Bulk SMS processing result: {result}")
 
