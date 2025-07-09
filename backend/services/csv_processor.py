@@ -1,0 +1,308 @@
+"""
+CSV processor service for bulk SMS operations
+"""
+
+import pandas as pd
+import uuid
+import asyncio
+import logging
+from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
+import sys
+import os
+
+# Add backend directory to path for imports
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, backend_dir)
+
+from database import BulkSMSJob, SMSMessage, get_db
+from services.twilio_service import TwilioService
+import phonenumbers
+import re
+from datetime import datetime
+import time
+
+logger = logging.getLogger(__name__)
+
+class CSVProcessor:
+    """Service class for processing CSV files for bulk SMS"""
+    
+    def __init__(self):
+        self.twilio_service = TwilioService()
+    
+    def validate_csv_file(self, file_path: str) -> Dict[str, Any]:
+        """
+        Validate CSV file format and content
+        
+        Args:
+            file_path: Path to the CSV file
+            
+        Returns:
+            Dictionary with validation results
+        """
+        try:
+            # Read CSV file
+            df = pd.read_csv(file_path)
+            
+            # Check if required columns exist
+            required_columns = ['phone_number']
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            
+            if missing_columns:
+                return {
+                    "success": False,
+                    "error": f"Missing required columns: {', '.join(missing_columns)}",
+                    "required_columns": required_columns,
+                    "found_columns": list(df.columns)
+                }
+            
+            # Validate phone numbers
+            valid_numbers = []
+            invalid_numbers = []
+            
+            for index, row in df.iterrows():
+                phone_number = str(row['phone_number']).strip()
+                if self._validate_phone_number(phone_number):
+                    valid_numbers.append({
+                        "row": index + 1,
+                        "phone_number": phone_number,
+                        "name": row.get('name', ''),
+                        "custom_field": row.get('custom_field', '')
+                    })
+                else:
+                    invalid_numbers.append({
+                        "row": index + 1,
+                        "phone_number": phone_number,
+                        "error": "Invalid phone number format"
+                    })
+            
+            return {
+                "success": True,
+                "total_rows": len(df),
+                "valid_numbers": valid_numbers,
+                "invalid_numbers": invalid_numbers,
+                "valid_count": len(valid_numbers),
+                "invalid_count": len(invalid_numbers),
+                "columns": list(df.columns)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error validating CSV file: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def _validate_phone_number(self, phone_number: str) -> bool:
+        """
+        Validate individual phone number
+        
+        Args:
+            phone_number: Phone number to validate
+            
+        Returns:
+            Boolean indicating if phone number is valid
+        """
+        try:
+            # Remove any non-digit characters except +
+            cleaned = re.sub(r'[^\d+]', '', phone_number)
+            
+            # Parse the phone number
+            parsed = phonenumbers.parse(cleaned, None)
+            
+            # Check if it's valid
+            return phonenumbers.is_valid_number(parsed)
+        except Exception:
+            return False
+    
+    def _format_phone_number(self, phone_number: str) -> str:
+        """
+        Format phone number to E164 format
+        
+        Args:
+            phone_number: Phone number to format
+            
+        Returns:
+            Formatted phone number in E164 format
+        """
+        try:
+            # Remove any non-digit characters except +
+            cleaned = re.sub(r'[^\d+]', '', phone_number)
+            
+            # Parse the phone number
+            parsed = phonenumbers.parse(cleaned, None)
+            
+            # Return in E164 format
+            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+        except Exception:
+            return phone_number
+    
+    async def process_bulk_sms(self, file_path: str, message_template: str, db: Session) -> Dict[str, Any]:
+        """
+        Process bulk SMS from CSV file
+        
+        Args:
+            file_path: Path to the CSV file
+            message_template: SMS message template
+            db: Database session
+            
+        Returns:
+            Dictionary with processing results
+        """
+        try:
+            # Validate CSV file first
+            validation_result = self.validate_csv_file(file_path)
+            
+            if not validation_result["success"]:
+                return validation_result
+            
+            valid_numbers = validation_result["valid_numbers"]
+            
+            if not valid_numbers:
+                return {
+                    "success": False,
+                    "error": "No valid phone numbers found in CSV file"
+                }
+            
+            # Create bulk SMS job
+            job_id = str(uuid.uuid4())
+            bulk_job = BulkSMSJob(
+                job_id=job_id,
+                filename=file_path.split('/')[-1],
+                total_count=len(valid_numbers),
+                message_template=message_template,
+                status="processing"
+            )
+            
+            db.add(bulk_job)
+            db.commit()
+            
+            # Process SMS sending in background
+            asyncio.create_task(self._send_bulk_sms(job_id, valid_numbers, message_template, db))
+            
+            return {
+                "success": True,
+                "job_id": job_id,
+                "total_count": len(valid_numbers),
+                "message": f"Bulk SMS job started. Processing {len(valid_numbers)} messages."
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing bulk SMS: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def _send_bulk_sms(self, job_id: str, recipients: List[Dict], message_template: str, db: Session):
+        """
+        Send bulk SMS messages (background task)
+        
+        Args:
+            job_id: Bulk SMS job ID
+            recipients: List of recipient data
+            message_template: SMS message template
+            db: Database session
+        """
+        sent_count = 0
+        failed_count = 0
+        
+        try:
+            for recipient in recipients:
+                try:
+                    # Format phone number
+                    phone_number = self._format_phone_number(recipient["phone_number"])
+                    
+                    # Personalize message template
+                    message_body = self._personalize_message(message_template, recipient)
+                    
+                    # Send SMS
+                    result = self.twilio_service.send_sms(phone_number, message_body)
+                    
+                    # Create SMS message record
+                    sms_message = SMSMessage(
+                        message_sid=result.get("message_sid"),
+                        from_number=result.get("from_number", ""),
+                        to_number=phone_number,
+                        message_body=message_body,
+                        status=result.get("status", "failed"),
+                        direction="outbound",
+                        cost=float(result.get("price", 0)) if result.get("price") else None,
+                        error_code=result.get("error_code"),
+                        error_message=result.get("error_message")
+                    )
+                    
+                    db.add(sms_message)
+                    
+                    if result["success"]:
+                        sent_count += 1
+                    else:
+                        failed_count += 1
+                    
+                    # Rate limiting - wait 1 second between messages
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    logger.error(f"Error sending SMS to {recipient['phone_number']}: {e}")
+                    failed_count += 1
+                    
+                    # Create failed SMS message record
+                    sms_message = SMSMessage(
+                        message_sid=None,
+                        from_number="",
+                        to_number=recipient["phone_number"],
+                        message_body=message_template,
+                        status="failed",
+                        direction="outbound",
+                        error_message=str(e)
+                    )
+                    
+                    db.add(sms_message)
+                
+                # Update job progress
+                bulk_job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
+                if bulk_job:
+                    bulk_job.sent_count = sent_count
+                    bulk_job.failed_count = failed_count
+                    db.commit()
+            
+            # Mark job as completed
+            bulk_job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
+            if bulk_job:
+                bulk_job.status = "completed"
+                bulk_job.completed_at = datetime.utcnow()
+                db.commit()
+            
+            logger.info(f"Bulk SMS job {job_id} completed. Sent: {sent_count}, Failed: {failed_count}")
+            
+        except Exception as e:
+            logger.error(f"Error in bulk SMS job {job_id}: {e}")
+            
+            # Mark job as failed
+            bulk_job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
+            if bulk_job:
+                bulk_job.status = "failed"
+                bulk_job.completed_at = datetime.utcnow()
+                db.commit()
+    
+    def _personalize_message(self, template: str, recipient: Dict) -> str:
+        """
+        Personalize message template with recipient data
+        
+        Args:
+            template: Message template
+            recipient: Recipient data
+            
+        Returns:
+            Personalized message
+        """
+        message = template
+        
+        # Replace placeholders with recipient data
+        if recipient.get("name"):
+            message = message.replace("{name}", recipient["name"])
+        
+        if recipient.get("custom_field"):
+            message = message.replace("{custom_field}", recipient["custom_field"])
+        
+        return message
