@@ -576,6 +576,16 @@ async def simulate_bulk_sms(request: dict, db: Session = Depends(get_db)):
             "traceback": traceback.format_exc()
         }
 
+@app.get("/api/troubleshoot/bulk-sms")
+async def troubleshoot_bulk_sms_info():
+    """Info about the troubleshoot endpoint"""
+    return {
+        "message": "This is the bulk SMS troubleshooting endpoint",
+        "usage": "POST with form data: file (CSV) and message_template",
+        "example_curl": "curl -X POST /api/troubleshoot/bulk-sms -F 'file=@test.csv' -F 'message_template=Hi {name}'",
+        "web_interface": "Use the 'Troubleshoot' button in the Bulk SMS tab"
+    }
+
 @app.post("/api/troubleshoot/bulk-sms")
 async def troubleshoot_bulk_sms(file: UploadFile = File(...), message_template: str = Form(...), db: Session = Depends(get_db)):
     """Comprehensive troubleshooting for bulk SMS - runs through entire process with detailed reporting"""
@@ -843,6 +853,82 @@ async def troubleshoot_bulk_sms(file: UploadFile = File(...), message_template: 
             "traceback": traceback.format_exc()
         }
         return troubleshoot_report
+
+@app.get("/api/troubleshoot/quick-test")
+async def quick_troubleshoot(db: Session = Depends(get_db)):
+    """Quick troubleshooting without file upload - accessible via browser"""
+
+    report = {
+        "timestamp": datetime.now().isoformat(),
+        "tests": [],
+        "summary": ""
+    }
+
+    try:
+        # Test 1: Configuration
+        config_ok = is_configured()
+        report["tests"].append({
+            "test": "Configuration",
+            "status": "pass" if config_ok else "fail",
+            "details": f"Twilio configured: {config_ok}, Service available: {twilio_service is not None}, CSV processor: {csv_processor is not None}"
+        })
+
+        # Test 2: Service sync
+        if csv_processor and twilio_service:
+            csv_processor.twilio_service = twilio_service
+            same_service = csv_processor.twilio_service is twilio_service
+            report["tests"].append({
+                "test": "Service Sync",
+                "status": "pass" if same_service else "fail",
+                "details": f"CSV processor uses same service: {same_service}"
+            })
+
+        # Test 3: Simple SMS test (only if configured)
+        if config_ok and twilio_service:
+            try:
+                test_result = twilio_service.send_sms("+447960858925", "Quick troubleshoot test")
+                report["tests"].append({
+                    "test": "SMS Sending",
+                    "status": "pass" if test_result.get("success") else "fail",
+                    "details": f"SMS result: {test_result}"
+                })
+            except Exception as e:
+                report["tests"].append({
+                    "test": "SMS Sending",
+                    "status": "fail",
+                    "details": f"SMS error: {str(e)}"
+                })
+
+        # Test 4: Database
+        try:
+            test_count = db.query(SMSMessage).count()
+            report["tests"].append({
+                "test": "Database",
+                "status": "pass",
+                "details": f"Database accessible, {test_count} SMS messages in history"
+            })
+        except Exception as e:
+            report["tests"].append({
+                "test": "Database",
+                "status": "fail",
+                "details": f"Database error: {str(e)}"
+            })
+
+        # Summary
+        failed_tests = [t for t in report["tests"] if t["status"] == "fail"]
+        if not failed_tests:
+            report["summary"] = "All basic tests passed. Issue likely in CSV processing or background tasks."
+        else:
+            report["summary"] = f"{len(failed_tests)} tests failed: {', '.join([t['test'] for t in failed_tests])}"
+
+        return report
+
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 
 @app.post("/api/test/sms")
 async def test_sms_simple(request: dict):
