@@ -576,6 +576,165 @@ async def simulate_bulk_sms(request: dict, db: Session = Depends(get_db)):
             "traceback": traceback.format_exc()
         }
 
+@app.post("/api/test/bulk-sync")
+async def test_bulk_sms_sync(file: UploadFile = File(...), message_template: str = Form(...), db: Session = Depends(get_db)):
+    """Test bulk SMS processing synchronously (no background task) for debugging"""
+
+    result = {
+        "timestamp": datetime.now().isoformat(),
+        "steps": [],
+        "messages_sent": [],
+        "final_result": {}
+    }
+
+    def add_step(step, status, details, data=None):
+        result["steps"].append({
+            "step": step,
+            "status": status,
+            "details": details,
+            "data": data
+        })
+
+    try:
+        # Step 1: Basic checks
+        if not is_configured():
+            add_step("Configuration", "error", "Twilio not configured")
+            return result
+
+        if not twilio_service:
+            add_step("Service Check", "error", "Twilio service not available")
+            return result
+
+        add_step("Initial Checks", "success", f"Configured: {is_configured()}, Service: {twilio_service is not None}")
+
+        # Step 2: Save file
+        os.makedirs("uploads", exist_ok=True)
+        file_path = f"uploads/sync_test_{uuid.uuid4()}_{file.filename}"
+
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        add_step("File Save", "success", f"Saved {len(content)} bytes to {file_path}")
+
+        # Step 3: Process CSV directly (no CSV processor)
+        try:
+            import pandas as pd
+            df = pd.read_csv(file_path)
+            add_step("CSV Read", "success", f"Read {len(df)} rows with columns: {list(df.columns)}")
+
+            # Validate required columns
+            if 'phone_number' not in df.columns:
+                add_step("CSV Validation", "error", "Missing 'phone_number' column")
+                return result
+
+            recipients = []
+            for index, row in df.iterrows():
+                phone_number = str(row['phone_number']).strip()
+
+                # Add + prefix if missing
+                if not phone_number.startswith('+'):
+                    phone_number = '+' + phone_number
+
+                recipients.append({
+                    "phone_number": phone_number,
+                    "name": row.get('name', ''),
+                    "custom_field": row.get('custom_field', '')
+                })
+
+            add_step("CSV Processing", "success", f"Processed {len(recipients)} recipients", recipients)
+
+        except Exception as e:
+            add_step("CSV Processing", "error", f"CSV error: {str(e)}")
+            return result
+
+        # Step 4: Send SMS synchronously (no background task)
+        sent_count = 0
+        failed_count = 0
+
+        for i, recipient in enumerate(recipients):
+            try:
+                # Personalize message
+                personalized_message = message_template
+                for key, value in recipient.items():
+                    if key != 'phone_number':
+                        personalized_message = personalized_message.replace(f'{{{key}}}', str(value))
+
+                add_step(f"Message {i+1} Prep", "success", f"To: {recipient['phone_number']}, Message: '{personalized_message}'")
+
+                # Send SMS using the global twilio service directly
+                sms_result = twilio_service.send_sms(recipient['phone_number'], personalized_message)
+
+                # Record result
+                if sms_result.get("success"):
+                    sent_count += 1
+                    add_step(f"Message {i+1} Send", "success", f"SMS sent successfully: {sms_result}")
+
+                    # Create database record
+                    sms_message = SMSMessage(
+                        message_sid=sms_result.get("message_sid"),
+                        from_number=sms_result.get("from_number", ""),
+                        to_number=recipient['phone_number'],
+                        message_body=personalized_message,
+                        status=sms_result.get("status", "sent"),
+                        direction="outbound",
+                        cost=float(sms_result.get("price", 0)) if sms_result.get("price") else None,
+                        error_code=sms_result.get("error_code"),
+                        error_message=sms_result.get("error_message")
+                    )
+                    db.add(sms_message)
+
+                else:
+                    failed_count += 1
+                    add_step(f"Message {i+1} Send", "error", f"SMS failed: {sms_result}")
+
+                result["messages_sent"].append({
+                    "recipient": recipient,
+                    "message": personalized_message,
+                    "result": sms_result
+                })
+
+            except Exception as e:
+                failed_count += 1
+                add_step(f"Message {i+1} Send", "error", f"Exception: {str(e)}")
+                result["messages_sent"].append({
+                    "recipient": recipient,
+                    "error": str(e)
+                })
+
+        # Commit database changes
+        try:
+            db.commit()
+            add_step("Database Commit", "success", "Database changes committed")
+        except Exception as e:
+            add_step("Database Commit", "error", f"Database error: {str(e)}")
+
+        # Final result
+        result["final_result"] = {
+            "total_recipients": len(recipients),
+            "sent_count": sent_count,
+            "failed_count": failed_count,
+            "success_rate": f"{(sent_count/len(recipients)*100):.1f}%" if recipients else "0%"
+        }
+
+        # Cleanup
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except:
+            pass
+
+        return result
+
+    except Exception as e:
+        import traceback
+        add_step("System Error", "error", f"Unexpected error: {str(e)}")
+        result["error_details"] = {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+        return result
+
 @app.get("/api/troubleshoot/bulk-sms")
 async def troubleshoot_bulk_sms_info():
     """Info about the troubleshoot endpoint"""
