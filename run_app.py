@@ -658,7 +658,9 @@ async def test_bulk_sms_sync(file: UploadFile = File(...), message_template: str
                 personalized_message = message_template
                 for key, value in recipient.items():
                     if key != 'phone_number':
-                        personalized_message = personalized_message.replace(f'{{{key}}}', str(value))
+                        # Convert value to string to avoid type errors
+                        str_value = str(value) if value is not None else ''
+                        personalized_message = personalized_message.replace(f'{{{key}}}', str_value)
 
                 add_step(f"Message {i+1} Prep", "success", f"To: {recipient['phone_number']}, Message: '{personalized_message}'")
 

@@ -373,9 +373,9 @@ class CSVProcessor:
         
         # Replace placeholders with recipient data
         if recipient.get("name"):
-            message = message.replace("{name}", recipient["name"])
-        
+            message = message.replace("{name}", str(recipient["name"]))
+
         if recipient.get("custom_field"):
-            message = message.replace("{custom_field}", recipient["custom_field"])
+            message = message.replace("{custom_field}", str(recipient["custom_field"]))
         
         return message
