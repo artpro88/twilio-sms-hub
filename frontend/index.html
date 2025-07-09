@@ -179,6 +179,10 @@
                                         <i class="fas fa-vial me-1"></i>
                                         Test Connection
                                     </button>
+                                    <button type="button" id="debug-config" class="btn btn-outline-info btn-sm">
+                                        <i class="fas fa-bug me-1"></i>
+                                        Debug
+                                    </button>
                                 </div>
                             </form>
 
@@ -697,6 +701,22 @@
                     if (segmentCountElement) {
                         const segments = Math.ceil(charCount / 160) || 1;
                         segmentCountElement.textContent = segments + ' segment' + (segments !== 1 ? 's' : '');
+                    }
+                });
+            }
+
+            // Debug button
+            const debugButton = document.getElementById('debug-config');
+            if (debugButton) {
+                debugButton.addEventListener('click', async function() {
+                    try {
+                        const response = await fetch('/api/config/status');
+                        const result = await response.json();
+                        console.log('Configuration Debug:', result);
+                        alert('Debug info logged to console. Check browser developer tools.');
+                    } catch (error) {
+                        console.error('Debug error:', error);
+                        alert('Debug failed. Check console for details.');
                     }
                 });
             }

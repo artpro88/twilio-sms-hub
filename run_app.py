@@ -337,6 +337,21 @@ async def test_config(config: TwilioConfig):
 
 # API Routes
 
+@app.get("/api/config/status")
+async def get_config_status():
+    """Get current configuration status for debugging"""
+    return {
+        "is_configured": is_configured(),
+        "has_twilio_service": twilio_service is not None,
+        "current_config": {
+            "has_account_sid": bool(current_config.get('account_sid')),
+            "has_auth_token": bool(current_config.get('auth_token')),
+            "sender_type": current_config.get('sender_type'),
+            "has_phone_number": bool(current_config.get('phone_number')),
+            "has_sender_id": bool(current_config.get('sender_id')),
+        }
+    }
+
 @app.post("/api/sms/send", response_model=SMSResponse)
 async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
     """Send a single SMS message"""
@@ -387,8 +402,13 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
             )
             
     except Exception as e:
-        logger.error(f"Error sending SMS: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e) if str(e) else "Unknown error occurred while sending SMS"
+        logger.error(f"Error sending SMS: {error_msg}")
+        logger.exception("Full exception details:")
+        return SMSResponse(
+            success=False,
+            message=f"Server error: {error_msg}"
+        )
 
 @app.post("/api/sms/bulk", response_model=BulkSMSResponse)
 async def send_bulk_sms(
