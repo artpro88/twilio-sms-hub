@@ -412,15 +412,37 @@ async def test_sms_simple(request: dict):
 @app.post("/api/sms/send", response_model=SMSResponse)
 async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
     """Send a single SMS message"""
-    try:
-        # Check if Twilio is configured
-        if not is_configured():
-            logger.error("Twilio not configured - missing configuration")
-            raise HTTPException(status_code=400, detail="Twilio not configured. Please configure Twilio credentials first.")
+    # Check if Twilio is configured (outside try block to avoid catching HTTPException)
+    if not is_configured():
+        logger.error("Twilio not configured - missing configuration")
+        logger.error(f"Current config: {current_config}")
 
-        if not twilio_service:
-            logger.error("Twilio service not initialized")
-            raise HTTPException(status_code=500, detail="Twilio service not available. Please restart the application.")
+        # Check what's specifically missing
+        missing = []
+        if not current_config.get('account_sid'):
+            missing.append("Account SID")
+        if not current_config.get('auth_token'):
+            missing.append("Auth Token")
+        if not current_config.get('sender_type'):
+            missing.append("Sender Type")
+        elif current_config.get('sender_type') == 'phone' and not current_config.get('phone_number'):
+            missing.append("Phone Number")
+        elif current_config.get('sender_type') == 'alphanumeric' and not current_config.get('sender_id'):
+            missing.append("Sender ID")
+
+        return SMSResponse(
+            success=False,
+            message=f"Twilio not configured. Missing: {', '.join(missing)}. Please configure in the Configuration tab."
+        )
+
+    if not twilio_service:
+        logger.error("Twilio service not initialized")
+        return SMSResponse(
+            success=False,
+            message="Twilio service not available. Please restart the application."
+        )
+
+    try:
 
         logger.info(f"Sending SMS to {sms_request.to_number}")
         logger.info(f"Current config: {current_config}")
