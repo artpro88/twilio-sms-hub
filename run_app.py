@@ -861,19 +861,62 @@ async def quick_troubleshoot(db: Session = Depends(get_db)):
     report = {
         "timestamp": datetime.now().isoformat(),
         "tests": [],
-        "summary": ""
+        "summary": "",
+        "raw_data": {}
     }
 
     try:
+        # Detailed configuration analysis
+        global current_config, twilio_service, csv_processor
+
+        report["raw_data"] = {
+            "current_config": current_config,
+            "config_file_exists": os.path.exists(CONFIG_FILE),
+            "environment_vars": {
+                "TWILIO_ACCOUNT_SID": bool(os.getenv('TWILIO_ACCOUNT_SID')),
+                "TWILIO_AUTH_TOKEN": bool(os.getenv('TWILIO_AUTH_TOKEN')),
+                "TWILIO_SENDER_TYPE": os.getenv('TWILIO_SENDER_TYPE'),
+                "TWILIO_PHONE_NUMBER": bool(os.getenv('TWILIO_PHONE_NUMBER')),
+                "TWILIO_SENDER_ID": bool(os.getenv('TWILIO_SENDER_ID')),
+            },
+            "global_services": {
+                "twilio_service_type": str(type(twilio_service)) if twilio_service else None,
+                "csv_processor_type": str(type(csv_processor)) if csv_processor else None,
+                "twilio_service_is_none": twilio_service is None,
+                "csv_processor_is_none": csv_processor is None
+            }
+        }
+
         # Test 1: Configuration
         config_ok = is_configured()
         report["tests"].append({
-            "test": "Configuration",
+            "test": "Configuration Check",
             "status": "pass" if config_ok else "fail",
-            "details": f"Twilio configured: {config_ok}, Service available: {twilio_service is not None}, CSV processor: {csv_processor is not None}"
+            "details": f"is_configured(): {config_ok}, twilio_service exists: {twilio_service is not None}, csv_processor exists: {csv_processor is not None}"
         })
 
-        # Test 2: Service sync
+        # Test 2: Try to reinitialize services if missing
+        if not config_ok or not twilio_service or not csv_processor:
+            try:
+                logger.info("Attempting to reinitialize services...")
+                init_result = initialize_services()
+                report["tests"].append({
+                    "test": "Service Reinitialization",
+                    "status": "pass" if init_result else "fail",
+                    "details": f"Reinitialization result: {init_result}, twilio_service now: {twilio_service is not None}, csv_processor now: {csv_processor is not None}"
+                })
+
+                # Update config_ok after reinitialization
+                config_ok = is_configured()
+
+            except Exception as e:
+                report["tests"].append({
+                    "test": "Service Reinitialization",
+                    "status": "fail",
+                    "details": f"Reinitialization failed: {str(e)}"
+                })
+
+        # Test 3: Service sync
         if csv_processor and twilio_service:
             csv_processor.twilio_service = twilio_service
             same_service = csv_processor.twilio_service is twilio_service
@@ -882,8 +925,14 @@ async def quick_troubleshoot(db: Session = Depends(get_db)):
                 "status": "pass" if same_service else "fail",
                 "details": f"CSV processor uses same service: {same_service}"
             })
+        else:
+            report["tests"].append({
+                "test": "Service Sync",
+                "status": "fail",
+                "details": f"Cannot sync - twilio_service: {twilio_service is not None}, csv_processor: {csv_processor is not None}"
+            })
 
-        # Test 3: Simple SMS test (only if configured)
+        # Test 4: Simple SMS test (only if configured)
         if config_ok and twilio_service:
             try:
                 test_result = twilio_service.send_sms("+447960858925", "Quick troubleshoot test")
@@ -898,8 +947,14 @@ async def quick_troubleshoot(db: Session = Depends(get_db)):
                     "status": "fail",
                     "details": f"SMS error: {str(e)}"
                 })
+        else:
+            report["tests"].append({
+                "test": "SMS Sending",
+                "status": "skip",
+                "details": f"Skipped - config_ok: {config_ok}, twilio_service: {twilio_service is not None}"
+            })
 
-        # Test 4: Database
+        # Test 5: Database
         try:
             test_count = db.query(SMSMessage).count()
             report["tests"].append({
