@@ -789,6 +789,58 @@ async def get_bulk_jobs(db: Session = Depends(get_db)):
         logger.error(f"Error fetching bulk SMS jobs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/sms/jobs/{job_id}/details")
+async def get_bulk_job_details(job_id: str, db: Session = Depends(get_db)):
+    """Get detailed information about a specific bulk SMS job"""
+    try:
+        # Get the job
+        job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
+        if not job:
+            return {"success": False, "error": "Job not found"}
+
+        # Get all messages for this job (using timestamp range)
+        messages = db.query(SMSMessage).filter(
+            and_(
+                SMSMessage.created_at >= job.created_at,
+                SMSMessage.created_at <= (job.completed_at or datetime.now())
+            )
+        ).order_by(SMSMessage.created_at.desc()).all()
+
+        message_details = []
+        for msg in messages:
+            message_details.append({
+                "message_sid": msg.message_sid,
+                "to_number": msg.to_number,
+                "from_number": msg.from_number,
+                "status": msg.status,
+                "error_code": msg.error_code,
+                "error_message": msg.error_message,
+                "cost": msg.cost,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                "message_body_preview": msg.message_body[:100] + "..." if len(msg.message_body) > 100 else msg.message_body
+            })
+
+        return {
+            "success": True,
+            "job": {
+                "job_id": job.job_id,
+                "filename": job.filename,
+                "status": job.status,
+                "total_count": job.total_count,
+                "sent_count": job.sent_count,
+                "failed_count": job.failed_count,
+                "message_template": job.message_template,
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                "error_message": job.error_message
+            },
+            "messages": message_details
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching job details: {e}")
+        return {"success": False, "error": str(e)}
+
 @app.get("/api/sms/stats", response_model=SMSStats)
 async def get_sms_stats(db: Session = Depends(get_db)):
     """Get SMS statistics"""
