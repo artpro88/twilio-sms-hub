@@ -240,36 +240,32 @@
                             </p>
 
                             <div class="mb-3">
-                                <label class="form-label small fw-bold">Incoming SMS Webhook:</label>
+                                <label class="form-label small fw-bold">Webhook URL (for both incoming SMS and status callbacks):</label>
                                 <div class="input-group input-group-sm">
                                     <input type="text" class="form-control" readonly
-                                           value="https://yourdomain.com/api/webhooks/incoming">
+                                           value="https://web-production-f2175.up.railway.app/api/webhooks/incoming">
                                     <button class="btn btn-outline-secondary" type="button"
-                                            onclick="copyToClipboard('https://yourdomain.com/api/webhooks/incoming')">
+                                            onclick="copyToClipboard('https://web-production-f2175.up.railway.app/api/webhooks/incoming')">
                                         <i class="fas fa-copy"></i>
                                     </button>
                                 </div>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label small fw-bold">Status Callback Webhook:</label>
-                                <div class="input-group input-group-sm">
-                                    <input type="text" class="form-control" readonly
-                                           value="https://yourdomain.com/api/webhooks/status">
-                                    <button class="btn btn-outline-secondary" type="button"
-                                            onclick="copyToClipboard('https://yourdomain.com/api/webhooks/status')">
-                                        <i class="fas fa-copy"></i>
-                                    </button>
+                                <div class="form-text">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    Use this same URL for both "A message comes in" and "Primary handler fails" in Twilio Console.
                                 </div>
                             </div>
 
-                            <div class="alert alert-info small mb-0">
-                                <i class="fas fa-info-circle me-1"></i>
-                                <strong>Note:</strong> Replace "yourdomain.com" with your actual domain.
-                                Configure these URLs in your
+                            <div class="alert alert-warning small mb-0">
+                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                <strong>Important:</strong> In your
                                 <a href="https://console.twilio.com/us1/develop/phone-numbers/manage/incoming" target="_blank">
                                     Twilio Phone Numbers settings
-                                </a>.
+                                </a>, set this URL for:
+                                <ul class="mb-0 mt-2">
+                                    <li><strong>"A message comes in"</strong> (Primary Handler)</li>
+                                    <li><strong>"Primary handler fails"</strong> (Fallback Handler)</li>
+                                </ul>
+                                <small class="text-muted">Twilio allows only ONE webhook URL per phone number.</small>
                             </div>
                         </div>
                     </div>

@@ -342,8 +342,15 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
     """Send a single SMS message"""
     try:
         # Check if Twilio is configured
-        if not is_configured() or not twilio_service:
+        if not is_configured():
+            logger.error("Twilio not configured - missing configuration")
             raise HTTPException(status_code=400, detail="Twilio not configured. Please configure Twilio credentials first.")
+
+        if not twilio_service:
+            logger.error("Twilio service not initialized")
+            raise HTTPException(status_code=500, detail="Twilio service not available. Please restart the application.")
+
+        logger.info(f"Sending SMS to {sms_request.to_number}")
         # Send SMS via Twilio
         result = twilio_service.send_sms(sms_request.to_number, sms_request.message_body)
         
@@ -363,7 +370,8 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
         db.add(sms_message)
         db.commit()
         
-        if result["success"]:
+        if result.get("success"):
+            logger.info(f"SMS sent successfully. SID: {result.get('message_sid')}")
             return SMSResponse(
                 success=True,
                 message_sid=result["message_sid"],
@@ -371,9 +379,11 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
                 cost=float(result.get("price", 0)) if result.get("price") else None
             )
         else:
+            error_msg = result.get("error_message", "Failed to send SMS")
+            logger.error(f"SMS sending failed: {error_msg}")
             return SMSResponse(
                 success=False,
-                message=result.get("error_message", "Failed to send SMS")
+                message=error_msg
             )
             
     except Exception as e:

@@ -535,22 +535,31 @@ class SMSApp {
                 })
             });
 
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+
             const result = await response.json();
 
             if (result.success) {
-                this.showResult('send-result', 
-                    `SMS sent successfully! Message SID: ${result.message_sid}${result.cost ? ` (Cost: $${result.cost})` : ''}`, 
+                this.showResult('send-result',
+                    `SMS sent successfully! Message SID: ${result.message_sid}${result.cost ? ` (Cost: $${result.cost})` : ''}`,
                     true);
-                
+
                 // Clear form
                 document.getElementById('send-sms-form').reset();
-                document.querySelector('#send-sms .char-count span').textContent = '0';
-                
+                const charCountElement = document.getElementById('char-count');
+                if (charCountElement) {
+                    charCountElement.textContent = '0';
+                }
+
                 // Refresh stats and history
                 this.loadStats();
                 this.loadHistory();
             } else {
-                this.showResult('send-result', `Failed to send SMS: ${result.message}`, false);
+                const errorMessage = result.message || result.detail || result.error_message || 'Unknown error occurred';
+                this.showResult('send-result', `Failed to send SMS: ${errorMessage}`, false);
             }
         } catch (error) {
             this.showResult('send-result', `Error: ${error.message}`, false);
