@@ -355,8 +355,59 @@ async def get_config_status():
             "sender_type": current_config.get('sender_type'),
             "has_phone_number": bool(current_config.get('phone_number')),
             "has_sender_id": bool(current_config.get('sender_id')),
+        },
+        "environment_vars": {
+            "TWILIO_ACCOUNT_SID": bool(os.getenv('TWILIO_ACCOUNT_SID')),
+            "TWILIO_AUTH_TOKEN": bool(os.getenv('TWILIO_AUTH_TOKEN')),
+            "TWILIO_SENDER_TYPE": os.getenv('TWILIO_SENDER_TYPE'),
+            "TWILIO_PHONE_NUMBER": bool(os.getenv('TWILIO_PHONE_NUMBER')),
+            "TWILIO_SENDER_ID": bool(os.getenv('TWILIO_SENDER_ID')),
         }
     }
+
+@app.get("/api/test/simple")
+async def simple_test():
+    """Simple test endpoint"""
+    try:
+        return {"status": "ok", "message": "API is working"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/test/sms")
+async def test_sms_simple(request: dict):
+    """Simple SMS test endpoint for debugging"""
+    try:
+        logger.info(f"Test SMS request: {request}")
+
+        # Check basic requirements
+        if not request.get('to_number') or not request.get('message_body'):
+            return {"success": False, "error": "Missing to_number or message_body"}
+
+        # Check configuration
+        logger.info(f"Is configured: {is_configured()}")
+        logger.info(f"Has twilio service: {twilio_service is not None}")
+
+        if not is_configured():
+            return {"success": False, "error": "Not configured"}
+
+        if not twilio_service:
+            return {"success": False, "error": "Twilio service not initialized"}
+
+        # Try to send SMS
+        result = twilio_service.send_sms(request['to_number'], request['message_body'])
+        logger.info(f"SMS result: {result}")
+
+        return {"success": True, "result": result}
+
+    except Exception as e:
+        import traceback
+        error_details = {
+            "error": str(e),
+            "type": type(e).__name__,
+            "traceback": traceback.format_exc()
+        }
+        logger.error(f"Test SMS error: {error_details}")
+        return {"success": False, "error_details": error_details}
 
 @app.post("/api/sms/send", response_model=SMSResponse)
 async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
@@ -412,12 +463,17 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
             )
             
     except Exception as e:
+        import traceback
         error_msg = str(e) if str(e) else "Unknown error occurred while sending SMS"
+        full_traceback = traceback.format_exc()
         logger.error(f"Error sending SMS: {error_msg}")
-        logger.exception("Full exception details:")
+        logger.error(f"Full traceback: {full_traceback}")
+        logger.exception("Exception details:")
+
+        # Return more detailed error information
         return SMSResponse(
             success=False,
-            message=f"Server error: {error_msg}"
+            message=f"Server error: {error_msg} | Type: {type(e).__name__} | Traceback available in logs"
         )
 
 @app.post("/api/sms/bulk", response_model=BulkSMSResponse)
