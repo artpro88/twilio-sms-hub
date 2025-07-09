@@ -60,12 +60,44 @@ class TwilioService:
             Dictionary with success status, message SID, and other details
         """
         try:
-            message = self.client.messages.create(
-                body=message_body,
-                from_=self.from_value,
-                to=to_number,
-                status_callback=f"{os.getenv('BASE_URL', 'http://localhost:8000')}/api/webhooks/status"
-            )
+            # Get the base URL with multiple fallback options
+            base_url = os.getenv('BASE_URL')
+
+            if not base_url:
+                # Try Railway-specific environment variables
+                railway_url = os.getenv('RAILWAY_STATIC_URL')
+                railway_public_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN')
+
+                if railway_url:
+                    base_url = f"https://{railway_url}"
+                elif railway_public_domain:
+                    base_url = f"https://{railway_public_domain}"
+                else:
+                    # Manual override for Railway - you can set this in Railway dashboard
+                    manual_url = os.getenv('WEBHOOK_BASE_URL')
+                    if manual_url:
+                        base_url = manual_url
+                    else:
+                        # If we can't determine the URL, don't use status callback
+                        logger.warning("Cannot determine base URL, sending SMS without status callback")
+                        base_url = None
+
+            logger.info(f"Using base URL for status callback: {base_url}")
+
+            # Create message with or without status callback
+            message_params = {
+                'body': message_body,
+                'from_': self.from_value,
+                'to': to_number
+            }
+
+            if base_url and not base_url.startswith('http://localhost'):
+                message_params['status_callback'] = f"{base_url}/api/webhooks/status"
+                logger.info(f"Status callback URL: {message_params['status_callback']}")
+            else:
+                logger.info("Sending SMS without status callback (local development or unknown URL)")
+
+            message = self.client.messages.create(**message_params)
             
             logger.info(f"SMS sent successfully. SID: {message.sid}")
             
