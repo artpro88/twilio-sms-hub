@@ -56,24 +56,30 @@ class TwilioService:
         """Check if this is a duplicate message sent within the last 5 seconds"""
         import time
 
-        # Create a unique key for this message
-        message_key = f"{to_number}:{message_body}"
+        # Create a unique key for this message (case-insensitive)
+        message_key = f"{to_number.lower()}:{message_body.lower()}"
 
         # Get current time
         current_time = time.time()
 
-        # Check if we've sent this exact message recently (within 5 seconds)
+        # Check if we've sent this exact message recently (within 10 seconds)
         if message_key in cls._recent_messages:
             last_sent_time = cls._recent_messages[message_key]
-            if current_time - last_sent_time < 5:  # 5 second deduplication window
-                logger.warning(f"🚫 DUPLICATE MESSAGE BLOCKED: {to_number}, sent {current_time - last_sent_time:.2f} seconds ago")
+            if current_time - last_sent_time < 10:  # 10 second deduplication window
+                logger.warning(f"🚫 DUPLICATE MESSAGE BLOCKED: {to_number}, message='{message_body[:30]}...', sent {current_time - last_sent_time:.2f} seconds ago")
+                logger.warning(f"🔑 Duplicate key: {message_key}")
                 return True
 
         # Update the last sent time for this message
         cls._recent_messages[message_key] = current_time
+        logger.info(f"✅ Message allowed and recorded: {message_key}")
 
-        # Clean up old entries (older than 30 seconds)
-        cls._recent_messages = {k: v for k, v in cls._recent_messages.items() if current_time - v < 30}
+        # Clean up old entries (older than 60 seconds)
+        old_count = len(cls._recent_messages)
+        cls._recent_messages = {k: v for k, v in cls._recent_messages.items() if current_time - v < 60}
+        new_count = len(cls._recent_messages)
+        if old_count != new_count:
+            logger.info(f"🧹 Cleaned up {old_count - new_count} old deduplication entries")
 
         return False
 
@@ -89,9 +95,15 @@ class TwilioService:
             Dictionary with success status, message SID, and other details
         """
         import traceback
+        import threading
         call_stack = traceback.format_stack()
-        logger.info(f"🚨 SMS SEND CALLED: to={to_number}, message='{message_body[:50]}...', caller_stack_depth={len(call_stack)}")
-        logger.info(f"🔍 Call stack (last 3 frames): {call_stack[-3:]}")
+        thread_id = threading.get_ident()
+        logger.info(f"🚨 SMS SEND CALLED: to={to_number}, message='{message_body[:50]}...', thread_id={thread_id}, caller_stack_depth={len(call_stack)}")
+        logger.info(f"🔍 Call stack (last 5 frames): {call_stack[-5:]}")
+
+        # Log the exact calling function
+        caller_frame = call_stack[-2] if len(call_stack) >= 2 else "Unknown"
+        logger.info(f"📞 Direct caller: {caller_frame.strip()}")
 
         # Check for duplicate messages
         if self._is_duplicate(to_number, message_body):
