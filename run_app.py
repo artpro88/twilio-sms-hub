@@ -1723,6 +1723,98 @@ async def get_account_balance():
         logger.error(f"Error fetching account balance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/debug/csv-processing")
+async def debug_csv_processing(file: UploadFile = File(...)):
+    """Debug CSV processing step by step to identify phone number issues"""
+
+    debug_info = {
+        "timestamp": datetime.now().isoformat(),
+        "filename": file.filename,
+        "steps": []
+    }
+
+    try:
+        # Step 1: Save and read file
+        os.makedirs("uploads", exist_ok=True)
+        file_path = f"uploads/debug_{uuid.uuid4()}_{file.filename}"
+
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        debug_info["steps"].append({
+            "step": "File Save",
+            "status": "success",
+            "details": f"Saved {len(content)} bytes"
+        })
+
+        # Step 2: Read raw CSV content
+        with open(file_path, 'r') as f:
+            raw_content = f.read()
+
+        debug_info["raw_csv_content"] = raw_content
+
+        # Step 3: Parse with pandas
+        import pandas as pd
+        df = pd.read_csv(file_path)
+
+        debug_info["pandas_info"] = {
+            "columns": list(df.columns),
+            "row_count": len(df),
+            "sample_rows": df.to_dict('records')
+        }
+
+        # Step 4: Process each row individually
+        row_details = []
+        for index, row in df.iterrows():
+            row_info = {
+                "row_index": index,
+                "raw_row_data": dict(row),
+                "phone_processing": {}
+            }
+
+            # Get phone number
+            phone_number = str(row['phone_number']).strip()
+            row_info["phone_processing"]["original"] = phone_number
+
+            # Test validation and formatting
+            if csv_processor:
+                is_valid = csv_processor._validate_phone_number(phone_number)
+                row_info["phone_processing"]["is_valid"] = is_valid
+
+                if is_valid:
+                    try:
+                        formatted = csv_processor._format_phone_number(phone_number)
+                        row_info["phone_processing"]["formatted"] = formatted
+                    except Exception as e:
+                        row_info["phone_processing"]["format_error"] = str(e)
+
+            row_details.append(row_info)
+
+        debug_info["row_details"] = row_details
+
+        # Step 5: Test CSV processor validation
+        if csv_processor:
+            validation_result = csv_processor.validate_csv_file(file_path)
+            debug_info["csv_processor_validation"] = validation_result
+
+        # Cleanup
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except:
+            pass
+
+        return debug_info
+
+    except Exception as e:
+        import traceback
+        debug_info["error_details"] = {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+        return debug_info
+
 if __name__ == "__main__":
     import uvicorn
 
