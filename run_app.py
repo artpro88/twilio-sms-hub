@@ -964,19 +964,22 @@ async def troubleshoot_bulk_sms(
 
                     result = twilio_service.send_sms(phone_number, message_body)
 
-                    # Create SMS message record
-                    sms_message = SMSMessage(
-                        message_sid=result.get("message_sid"),
-                        from_number=result.get("from_number", ""),
-                        to_number=phone_number,
-                        message_body=message_body,
-                        status=result.get("status", "failed"),
-                        direction="outbound",
-                        cost=float(result.get("price", 0)) if result.get("price") else None,
-                        error_code=result.get("error_code"),
-                        error_message=result.get("error_message")
-                    )
-                    db.add(sms_message)
+                    # Create SMS message record (skip if duplicate blocked)
+                    if result.get("status") != "duplicate_blocked":
+                        sms_message = SMSMessage(
+                            message_sid=result.get("message_sid"),
+                            from_number=result.get("from_number", ""),
+                            to_number=phone_number,
+                            message_body=message_body,
+                            status=result.get("status", "failed"),
+                            direction="outbound",
+                            cost=float(result.get("price", 0)) if result.get("price") else None,
+                            error_code=result.get("error_code"),
+                            error_message=result.get("error_message")
+                        )
+                        db.add(sms_message)
+                    else:
+                        logger.info(f"Skipping database record for duplicate blocked message to {phone_number}")
 
                     if result.get("success"):
                         sent_count += 1
@@ -1321,21 +1324,23 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
         result = twilio_service.send_sms(sms_request.to_number, sms_request.message_body)
         logger.info(f"SMS send result: {result}")
         
-        # Store in database
-        sms_message = SMSMessage(
-            message_sid=result.get("message_sid"),
-            from_number=result.get("from_number", ""),
-            to_number=sms_request.to_number,
-            message_body=sms_request.message_body,
-            status=result.get("status", "failed"),
-            direction="outbound",
-            cost=float(result.get("price", 0)) if result.get("price") else None,
-            error_code=result.get("error_code"),
-            error_message=result.get("error_message")
-        )
-        
-        db.add(sms_message)
-        db.commit()
+        # Store in database (skip if duplicate blocked)
+        if result.get("status") != "duplicate_blocked":
+            sms_message = SMSMessage(
+                message_sid=result.get("message_sid"),
+                from_number=result.get("from_number", ""),
+                to_number=sms_request.to_number,
+                message_body=sms_request.message_body,
+                status=result.get("status", "failed"),
+                direction="outbound",
+                cost=float(result.get("price", 0)) if result.get("price") else None,
+                error_code=result.get("error_code"),
+                error_message=result.get("error_message")
+            )
+            db.add(sms_message)
+            db.commit()
+        else:
+            logger.info(f"Skipping database record for duplicate blocked message to {sms_request.to_number}")
         
         if result.get("success"):
             logger.info(f"SMS sent successfully. SID: {result.get('message_sid')}")

@@ -95,9 +95,10 @@ class TwilioService:
 
         # Check for duplicate messages
         if self._is_duplicate(to_number, message_body):
+            import uuid
             return {
                 "success": True,
-                "message_sid": "DUPLICATE_BLOCKED",
+                "message_sid": f"DUPLICATE_BLOCKED_{uuid.uuid4().hex[:8]}",
                 "status": "duplicate_blocked",
                 "direction": "outbound",
                 "from_number": self.from_value,

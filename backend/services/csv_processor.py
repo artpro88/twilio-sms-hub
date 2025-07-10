@@ -290,20 +290,22 @@ class CSVProcessor:
                     result = self.twilio_service.send_sms(phone_number, message_body)
                     logger.info(f"SMS result for {phone_number}: {result}")
 
-                    # Create SMS message record
-                    sms_message = SMSMessage(
-                        message_sid=result.get("message_sid"),
-                        from_number=result.get("from_number", ""),
-                        to_number=phone_number,
-                        message_body=message_body,
-                        status=result.get("status", "failed"),
-                        direction="outbound",
-                        cost=float(result.get("price", 0)) if result.get("price") else None,
-                        error_code=result.get("error_code"),
-                        error_message=result.get("error_message")
-                    )
-
-                    db.add(sms_message)
+                    # Create SMS message record (skip if duplicate blocked)
+                    if result.get("status") != "duplicate_blocked":
+                        sms_message = SMSMessage(
+                            message_sid=result.get("message_sid"),
+                            from_number=result.get("from_number", ""),
+                            to_number=phone_number,
+                            message_body=message_body,
+                            status=result.get("status", "failed"),
+                            direction="outbound",
+                            cost=float(result.get("price", 0)) if result.get("price") else None,
+                            error_code=result.get("error_code"),
+                            error_message=result.get("error_message")
+                        )
+                        db.add(sms_message)
+                    else:
+                        logger.info(f"Skipping database record for duplicate blocked message to {phone_number}")
 
                     if result.get("success"):
                         sent_count += 1
