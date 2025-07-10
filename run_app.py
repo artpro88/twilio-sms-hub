@@ -165,29 +165,43 @@ csv_processor = None
 # Global request deduplication tracker
 import time
 _global_sms_requests = {}
+ENABLE_APP_LEVEL_DEDUP = False  # Temporarily disabled for debugging
 
 def is_duplicate_request(phone_number, message_body, source="unknown"):
     """Check if this is a duplicate SMS request from any source"""
+    if not ENABLE_APP_LEVEL_DEDUP:
+        logger.info(f"🔓 APP-LEVEL DEDUP DISABLED: Allowing request from {source}")
+        return False
+
     request_key = f"{phone_number.lower()}:{message_body.lower()}"
     current_time = time.time()
 
-    # Check if we've processed this exact request recently (within 15 seconds)
+    logger.info(f"🔍 CHECKING REQUEST: {phone_number}, source='{source}', message='{message_body[:30]}...', key='{request_key}'")
+    logger.info(f"📊 Current requests in cache: {len(_global_sms_requests)}")
+
+    # Check if we've processed this exact request recently (within 10 seconds)
     if request_key in _global_sms_requests:
         last_request_time, last_source = _global_sms_requests[request_key]
-        if current_time - last_request_time < 15:  # 15 second window
+        time_diff = current_time - last_request_time
+        if time_diff < 10:  # 10 second window
             logger.warning(f"🚫 DUPLICATE REQUEST BLOCKED: {phone_number}, message='{message_body[:30]}...', "
                          f"last_source='{last_source}', current_source='{source}', "
-                         f"sent {current_time - last_request_time:.2f} seconds ago")
+                         f"sent {time_diff:.2f} seconds ago")
             return True
+        else:
+            logger.info(f"⏰ Request allowed - previous request was {time_diff:.2f} seconds ago (>10s)")
 
     # Record this request
     _global_sms_requests[request_key] = (current_time, source)
 
-    # Clean up old entries (older than 60 seconds)
-    _global_sms_requests.clear()  # Simple cleanup - clear all old entries
-    _global_sms_requests[request_key] = (current_time, source)
+    # Clean up old entries (older than 30 seconds) - but keep current one
+    old_count = len(_global_sms_requests)
+    _global_sms_requests = {k: v for k, v in _global_sms_requests.items() if current_time - v[0] < 30}
+    new_count = len(_global_sms_requests)
+    if old_count != new_count:
+        logger.info(f"🧹 Cleaned up {old_count - new_count} old request entries")
 
-    logger.info(f"✅ REQUEST ALLOWED: {phone_number}, source='{source}', message='{message_body[:30]}...'")
+    logger.info(f"✅ REQUEST ALLOWED: {phone_number}, source='{source}', message='{message_body[:30]}...', cache_size={len(_global_sms_requests)}")
     return False
 
 def initialize_services():
@@ -1316,9 +1330,9 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
     # Check for duplicate requests at application level
     if is_duplicate_request(sms_request.to_number, sms_request.message_body, "single_sms_endpoint"):
         return SMSResponse(
-            success=True,
-            message="Duplicate request blocked - SMS already sent recently",
-            message_sid="DUPLICATE_REQUEST_BLOCKED"
+            success=False,
+            message="Duplicate request detected - identical SMS was sent recently. Please wait before sending the same message again.",
+            message_sid=None
         )
 
     # Check if Twilio is configured (outside try block to avoid catching HTTPException)
