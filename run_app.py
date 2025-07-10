@@ -162,6 +162,34 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 twilio_service = None
 csv_processor = None
 
+# Global request deduplication tracker
+import time
+_global_sms_requests = {}
+
+def is_duplicate_request(phone_number, message_body, source="unknown"):
+    """Check if this is a duplicate SMS request from any source"""
+    request_key = f"{phone_number.lower()}:{message_body.lower()}"
+    current_time = time.time()
+
+    # Check if we've processed this exact request recently (within 15 seconds)
+    if request_key in _global_sms_requests:
+        last_request_time, last_source = _global_sms_requests[request_key]
+        if current_time - last_request_time < 15:  # 15 second window
+            logger.warning(f"🚫 DUPLICATE REQUEST BLOCKED: {phone_number}, message='{message_body[:30]}...', "
+                         f"last_source='{last_source}', current_source='{source}', "
+                         f"sent {current_time - last_request_time:.2f} seconds ago")
+            return True
+
+    # Record this request
+    _global_sms_requests[request_key] = (current_time, source)
+
+    # Clean up old entries (older than 60 seconds)
+    _global_sms_requests.clear()  # Simple cleanup - clear all old entries
+    _global_sms_requests[request_key] = (current_time, source)
+
+    logger.info(f"✅ REQUEST ALLOWED: {phone_number}, source='{source}', message='{message_body[:30]}...'")
+    return False
+
 def initialize_services():
     """Initialize Twilio services with current configuration"""
     global twilio_service, csv_processor
@@ -1284,6 +1312,15 @@ async def test_bulk_status():
 @app.post("/api/sms/send", response_model=SMSResponse)
 async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
     """Send a single SMS message"""
+
+    # Check for duplicate requests at application level
+    if is_duplicate_request(sms_request.to_number, sms_request.message_body, "single_sms_endpoint"):
+        return SMSResponse(
+            success=True,
+            message="Duplicate request blocked - SMS already sent recently",
+            message_sid="DUPLICATE_REQUEST_BLOCKED"
+        )
+
     # Check if Twilio is configured (outside try block to avoid catching HTTPException)
     if not is_configured():
         logger.error("Twilio not configured - missing configuration")

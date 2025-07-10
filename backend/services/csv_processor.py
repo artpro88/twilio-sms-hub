@@ -285,6 +285,20 @@ class CSVProcessor:
                     # Personalize message template
                     message_body = self._personalize_message(message_template, recipient)
 
+                    # Check for duplicate requests at application level
+                    try:
+                        # Import the global duplicate checker
+                        import sys
+                        if 'run_app' in sys.modules:
+                            run_app_module = sys.modules['run_app']
+                            is_duplicate_request = getattr(run_app_module, 'is_duplicate_request', None)
+                            if is_duplicate_request and is_duplicate_request(phone_number, message_body, "bulk_sms_background"):
+                                logger.info(f"Skipping duplicate request for {phone_number}")
+                                sent_count += 1  # Count as sent to avoid confusion
+                                continue
+                    except Exception as e:
+                        logger.warning(f"Could not check for duplicate request: {e}")
+
                     # Send SMS
                     logger.info(f"Sending SMS to {phone_number} with message: {message_body[:50]}...")
                     result = self.twilio_service.send_sms(phone_number, message_body)
