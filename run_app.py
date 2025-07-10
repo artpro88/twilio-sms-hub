@@ -577,7 +577,12 @@ async def simulate_bulk_sms(request: dict, db: Session = Depends(get_db)):
         }
 
 @app.post("/api/test/bulk-sync")
-async def test_bulk_sms_sync(file: UploadFile = File(...), message_template: str = Form(...), db: Session = Depends(get_db)):
+async def test_bulk_sms_sync(
+    file: UploadFile = File(...),
+    message_template: str = Form(...),
+    send_real_sms: bool = Form(False),
+    db: Session = Depends(get_db)
+):
     """Test bulk SMS processing synchronously (no background task) for debugging"""
 
     result = {
@@ -664,8 +669,18 @@ async def test_bulk_sms_sync(file: UploadFile = File(...), message_template: str
 
                 add_step(f"Message {i+1} Prep", "success", f"To: {recipient['phone_number']}, Message: '{personalized_message}'")
 
-                # Send SMS using the global twilio service directly
-                sms_result = twilio_service.send_sms(recipient['phone_number'], personalized_message)
+                # Send SMS only if explicitly requested
+                if send_real_sms:
+                    sms_result = twilio_service.send_sms(recipient['phone_number'], personalized_message)
+                else:
+                    # Simulate successful SMS for testing
+                    sms_result = {
+                        "success": True,
+                        "message_sid": f"TEST_SID_{i+1}",
+                        "status": "test_mode",
+                        "from_number": "TEST_SENDER",
+                        "message": "SMS not sent - test mode"
+                    }
 
                 # Record result
                 if sms_result.get("success"):
@@ -748,7 +763,12 @@ async def troubleshoot_bulk_sms_info():
     }
 
 @app.post("/api/troubleshoot/bulk-sms")
-async def troubleshoot_bulk_sms(file: UploadFile = File(...), message_template: str = Form(...), db: Session = Depends(get_db)):
+async def troubleshoot_bulk_sms(
+    file: UploadFile = File(...),
+    message_template: str = Form(...),
+    send_real_sms: bool = Form(False),
+    db: Session = Depends(get_db)
+):
     """Comprehensive troubleshooting for bulk SMS - runs through entire process with detailed reporting"""
 
     troubleshoot_report = {
@@ -845,13 +865,26 @@ async def troubleshoot_bulk_sms(file: UploadFile = File(...), message_template: 
             personalized_message = csv_processor._personalize_message(message_template, test_recipient)
             add_step("Message Personalization", "success", f"Template: '{message_template}' → Result: '{personalized_message}'")
 
-            # Test actual SMS sending
+            # Test actual SMS sending (only if explicitly requested)
             try:
-                sms_result = twilio_service.send_sms(formatted_number, personalized_message)
-                add_step("SMS Test",
-                        "success" if sms_result.get("success") else "error",
-                        f"SMS test result: {sms_result}",
-                        sms_result)
+                if send_real_sms:
+                    sms_result = twilio_service.send_sms(formatted_number, personalized_message)
+                    add_step("SMS Test",
+                            "success" if sms_result.get("success") else "error",
+                            f"SMS test result: {sms_result}",
+                            sms_result)
+                else:
+                    # Simulate SMS test without actually sending
+                    sms_result = {
+                        "success": True,
+                        "message_sid": "TEST_SID_TROUBLESHOOT",
+                        "status": "test_mode",
+                        "message": "SMS not sent - troubleshoot test mode"
+                    }
+                    add_step("SMS Test",
+                            "success",
+                            f"SMS test simulated (no real SMS sent): {sms_result}",
+                            sms_result)
 
                 if not sms_result.get("success"):
                     troubleshoot_report["final_diagnosis"] = "SMS sending failed"

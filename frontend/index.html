@@ -716,9 +716,12 @@
             resultDiv.innerHTML = `
                 <div class="alert alert-info">
                     <i class="fas fa-spinner fa-spin me-2"></i>
-                    Running comprehensive troubleshooting...
+                    Running comprehensive troubleshooting (test mode - no real SMS sent)...
                 </div>
             `;
+
+            // Default to test mode (no real SMS sent)
+            formData.append('send_real_sms', 'false');
 
             fetch('/api/troubleshoot/bulk-sms', {
                 method: 'POST',
