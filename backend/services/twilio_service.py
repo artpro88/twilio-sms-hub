@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 class TwilioService:
     """Service class for Twilio SMS operations"""
 
+    # Class-level deduplication cache
+    _recent_messages = {}
+
     def __init__(self):
         self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
         self.auth_token = os.getenv("TWILIO_AUTH_TOKEN")
@@ -47,18 +50,65 @@ class TwilioService:
 
         self.client = Client(self.account_sid, self.auth_token)
         logger.info("TwilioService initialized successfully")
-    
+
+    @classmethod
+    def _is_duplicate(cls, to_number, message_body):
+        """Check if this is a duplicate message sent within the last 5 seconds"""
+        import time
+
+        # Create a unique key for this message
+        message_key = f"{to_number}:{message_body}"
+
+        # Get current time
+        current_time = time.time()
+
+        # Check if we've sent this exact message recently (within 5 seconds)
+        if message_key in cls._recent_messages:
+            last_sent_time = cls._recent_messages[message_key]
+            if current_time - last_sent_time < 5:  # 5 second deduplication window
+                logger.warning(f"🚫 DUPLICATE MESSAGE BLOCKED: {to_number}, sent {current_time - last_sent_time:.2f} seconds ago")
+                return True
+
+        # Update the last sent time for this message
+        cls._recent_messages[message_key] = current_time
+
+        # Clean up old entries (older than 30 seconds)
+        cls._recent_messages = {k: v for k, v in cls._recent_messages.items() if current_time - v < 30}
+
+        return False
+
     def send_sms(self, to_number: str, message_body: str) -> Dict[str, Any]:
         """
         Send a single SMS message
-        
+
         Args:
             to_number: Recipient phone number in E164 format
             message_body: Message content
-            
+
         Returns:
             Dictionary with success status, message SID, and other details
         """
+        import traceback
+        call_stack = traceback.format_stack()
+        logger.info(f"🚨 SMS SEND CALLED: to={to_number}, message='{message_body[:50]}...', caller_stack_depth={len(call_stack)}")
+        logger.info(f"🔍 Call stack (last 3 frames): {call_stack[-3:]}")
+
+        # Check for duplicate messages
+        if self._is_duplicate(to_number, message_body):
+            return {
+                "success": True,
+                "message_sid": "DUPLICATE_BLOCKED",
+                "status": "duplicate_blocked",
+                "direction": "outbound",
+                "from_number": self.from_value,
+                "to_number": to_number,
+                "message_body": message_body,
+                "price": "0",
+                "price_unit": "USD",
+                "error_code": None,
+                "error_message": "Duplicate message blocked by deduplication system"
+            }
+
         try:
             # Get the base URL with multiple fallback options
             base_url = os.getenv('BASE_URL')
