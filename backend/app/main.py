@@ -128,46 +128,9 @@ async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
         logger.error(f"Error sending SMS: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/sms/bulk", response_model=BulkSMSResponse)
-async def send_bulk_sms(
-    file: UploadFile = File(...),
-    message_template: str = Form(...),
-    db: Session = Depends(get_db)
-):
-    """Send bulk SMS from CSV file"""
-    try:
-        # Validate file type
-        if not file.filename.endswith('.csv'):
-            raise HTTPException(status_code=400, detail="Only CSV files are allowed")
-        
-        # Save uploaded file
-        file_path = f"uploads/{uuid.uuid4()}_{file.filename}"
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Process bulk SMS
-        result = await csv_processor.process_bulk_sms(file_path, message_template, db)
-        
-        if result["success"]:
-            return BulkSMSResponse(
-                success=True,
-                job_id=result["job_id"],
-                message=result["message"],
-                total_count=result["total_count"]
-            )
-        else:
-            # Clean up file if processing failed
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            
-            raise HTTPException(status_code=400, detail=result.get("error", "Failed to process bulk SMS"))
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing bulk SMS: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# DUPLICATE BULK SMS ENDPOINT REMOVED
+# The main bulk SMS endpoint is in run_app.py
+# This duplicate endpoint was causing duplicate SMS sends
 
 @app.get("/api/sms/history", response_model=List[SMSStatus])
 async def get_sms_history(
