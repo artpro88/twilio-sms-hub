@@ -165,7 +165,7 @@ csv_processor = None
 # Global request deduplication tracker
 import time
 _global_sms_requests = {}
-ENABLE_APP_LEVEL_DEDUP = False  # Temporarily disabled for debugging
+ENABLE_APP_LEVEL_DEDUP = True  # Re-enabled to prevent bulk SMS duplicates
 
 def is_duplicate_request(phone_number, message_body, source="unknown"):
     """Check if this is a duplicate SMS request from any source"""
@@ -1431,7 +1431,23 @@ async def send_bulk_sms(
 ):
     """Send bulk SMS from CSV file"""
     try:
-        logger.info(f"Bulk SMS request received. File: {file.filename}, Template: {message_template[:50]}...")
+        import traceback
+        import threading
+        import time
+
+        call_stack = traceback.format_stack()
+        thread_id = threading.get_ident()
+        timestamp = time.time()
+
+        logger.info(f"🚨 BULK SMS ENDPOINT CALLED: File={file.filename}, Template='{message_template[:50]}...', thread_id={thread_id}, timestamp={timestamp}")
+        logger.info(f"🔍 Call stack (last 3 frames): {call_stack[-3:]}")
+
+        # Check for duplicate requests at application level
+        if is_duplicate_request(f"bulk_{file.filename}", message_template, "bulk_sms_endpoint"):
+            return {
+                "success": False,
+                "message": "Duplicate bulk SMS request detected - identical request was made recently. Please wait before submitting again."
+            }
 
         # Check if Twilio is configured
         if not is_configured():
@@ -1881,8 +1897,12 @@ async def get_safe_list():
         raise HTTPException(status_code=500, detail="Twilio service not available")
 
     try:
-        # Get all safe list entries
+        logger.info("Attempting to fetch Twilio Global Safe List...")
+
+        # Get all safe list entries - using the correct Twilio API path
         safe_list = twilio_service.client.usage.safe_list.list()
+
+        logger.info(f"Successfully fetched {len(safe_list)} safe list entries")
 
         return {
             "success": True,
@@ -1890,7 +1910,8 @@ async def get_safe_list():
                 {
                     "phone_number": entry.phone_number,
                     "date_created": entry.date_created.isoformat() if entry.date_created else None,
-                    "date_updated": entry.date_updated.isoformat() if entry.date_updated else None
+                    "date_updated": entry.date_updated.isoformat() if entry.date_updated else None,
+                    "sid": entry.sid
                 }
                 for entry in safe_list
             ],
@@ -1898,6 +1919,9 @@ async def get_safe_list():
         }
     except Exception as e:
         logger.error(f"Error fetching safe list: {e}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch safe list: {str(e)}")
 
 @app.post("/api/safelist/add")
@@ -1914,19 +1938,27 @@ async def add_to_safe_list(request: dict):
         raise HTTPException(status_code=400, detail="Phone number is required")
 
     try:
+        logger.info(f"Attempting to add {phone_number} to Twilio Global Safe List...")
+
         # Add to safe list
         safe_list_entry = twilio_service.client.usage.safe_list.create(
             phone_number=phone_number
         )
 
+        logger.info(f"Successfully added {phone_number} to safe list with SID: {safe_list_entry.sid}")
+
         return {
             "success": True,
             "message": f"Phone number {phone_number} added to safe list",
             "phone_number": safe_list_entry.phone_number,
-            "date_created": safe_list_entry.date_created.isoformat() if safe_list_entry.date_created else None
+            "date_created": safe_list_entry.date_created.isoformat() if safe_list_entry.date_created else None,
+            "sid": safe_list_entry.sid
         }
     except Exception as e:
         logger.error(f"Error adding to safe list: {e}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to add to safe list: {str(e)}")
 
 @app.delete("/api/safelist/remove")
