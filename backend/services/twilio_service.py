@@ -18,6 +18,8 @@ class TwilioService:
 
     # Class-level deduplication cache
     _recent_messages = {}
+    ENABLE_SERVICE_LEVEL_DEDUP = False  # Temporarily disabled for debugging
+    _call_counter = 0  # Track total calls to send_sms
 
     def __init__(self):
         self.account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -96,17 +98,25 @@ class TwilioService:
         """
         import traceback
         import threading
+
+        # Increment call counter
+        TwilioService._call_counter += 1
+        call_number = TwilioService._call_counter
+
         call_stack = traceback.format_stack()
         thread_id = threading.get_ident()
-        logger.info(f"🚨 SMS SEND CALLED: to={to_number}, message='{message_body[:50]}...', thread_id={thread_id}, caller_stack_depth={len(call_stack)}")
+        logger.info(f"🚨 SMS SEND CALLED #{call_number}: to={to_number}, message='{message_body[:50]}...', thread_id={thread_id}, caller_stack_depth={len(call_stack)}")
         logger.info(f"🔍 Call stack (last 5 frames): {call_stack[-5:]}")
 
         # Log the exact calling function
         caller_frame = call_stack[-2] if len(call_stack) >= 2 else "Unknown"
         logger.info(f"📞 Direct caller: {caller_frame.strip()}")
 
-        # Check for duplicate messages
-        if self._is_duplicate(to_number, message_body):
+        # Log service-level dedup status
+        logger.info(f"🛡️ Service-level deduplication: {'ENABLED' if self.ENABLE_SERVICE_LEVEL_DEDUP else 'DISABLED'}")
+
+        # Check for duplicate messages (if enabled)
+        if self.ENABLE_SERVICE_LEVEL_DEDUP and self._is_duplicate(to_number, message_body):
             import uuid
             return {
                 "success": True,
