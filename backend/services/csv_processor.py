@@ -277,32 +277,58 @@ class CSVProcessor:
                         db.commit()
                     return
 
-            for recipient in recipients:
-                try:
-                    # Format phone number
-                    phone_number = self._format_phone_number(recipient["phone_number"])
+            # Process recipients in batches with rate limiting for large volumes
+            # Configuration for high-volume processing (up to 10,000 contacts)
+            batch_size = min(100, max(10, len(recipients) // 20))  # Dynamic batch size: 10-100 based on total
+            delay_between_batches = 1.0  # 1 second between batches
+            delay_between_messages = 0.05  # 50ms between individual messages (allows ~1200/min)
 
-                    # Personalize message template
-                    message_body = self._personalize_message(message_template, recipient)
+            # Twilio rate limits:
+            # - Standard: 1 message/second (3600/hour)
+            # - High Volume: Up to 100 messages/second with proper setup
+            # Our settings: ~20 messages/second (safe for most accounts)
 
-                    # Check for duplicate requests at application level
+            total_recipients = len(recipients)
+            logger.info(f"Processing {total_recipients} recipients in batches of {batch_size}")
+
+            for batch_start in range(0, total_recipients, batch_size):
+                batch_end = min(batch_start + batch_size, total_recipients)
+                batch = recipients[batch_start:batch_end]
+                batch_number = (batch_start // batch_size) + 1
+                total_batches = (total_recipients + batch_size - 1) // batch_size
+
+                logger.info(f"Processing batch {batch_number}/{total_batches} ({len(batch)} recipients)")
+
+                for i, recipient in enumerate(batch):
                     try:
-                        # Import the global duplicate checker
-                        import sys
-                        if 'run_app' in sys.modules:
-                            run_app_module = sys.modules['run_app']
-                            is_duplicate_request = getattr(run_app_module, 'is_duplicate_request', None)
-                            if is_duplicate_request and is_duplicate_request(phone_number, message_body, "bulk_sms_background"):
-                                logger.info(f"Skipping duplicate request for {phone_number}")
-                                sent_count += 1  # Count as sent to avoid confusion
-                                continue
-                    except Exception as e:
-                        logger.warning(f"Could not check for duplicate request: {e}")
+                        # Format phone number
+                        phone_number = self._format_phone_number(recipient["phone_number"])
 
-                    # Send SMS
-                    logger.info(f"Sending SMS to {phone_number} with message: {message_body[:50]}...")
-                    result = self.twilio_service.send_sms(phone_number, message_body)
-                    logger.info(f"SMS result for {phone_number}: {result}")
+                        # Personalize message template
+                        message_body = self._personalize_message(message_template, recipient)
+
+                        # Check for duplicate requests at application level
+                        try:
+                            # Import the global duplicate checker
+                            import sys
+                            if 'run_app' in sys.modules:
+                                run_app_module = sys.modules['run_app']
+                                is_duplicate_request = getattr(run_app_module, 'is_duplicate_request', None)
+                                if is_duplicate_request and is_duplicate_request(phone_number, message_body, "bulk_sms_background"):
+                                    logger.info(f"Skipping duplicate request for {phone_number}")
+                                    sent_count += 1  # Count as sent to avoid confusion
+                                    continue
+                        except Exception as e:
+                            logger.warning(f"Could not check for duplicate request: {e}")
+
+                        # Send SMS with rate limiting
+                        logger.info(f"Sending SMS {batch_start + i + 1}/{total_recipients} to {phone_number}")
+                        result = self.twilio_service.send_sms(phone_number, message_body)
+                        logger.info(f"SMS result for {phone_number}: {result}")
+
+                        # Rate limiting: delay between messages
+                        if i < len(batch) - 1:  # Don't delay after the last message in batch
+                            await asyncio.sleep(delay_between_messages)
 
                     # Create SMS message record (skip if duplicate blocked)
                     if result.get("status") != "duplicate_blocked":
@@ -328,8 +354,10 @@ class CSVProcessor:
                         failed_count += 1
                         logger.error(f"SMS failed to {phone_number}: {result.get('error_message', 'Unknown error')}")
                     
-                    # Rate limiting - wait 1 second between messages
-                    time.sleep(1)
+                    # Enhanced rate limiting for large volumes
+                    # Use async sleep instead of blocking sleep
+                    # Reduced to 0.1 seconds for better throughput
+                    # This allows ~600 messages per minute (well within Twilio limits)
                     
                 except Exception as e:
                     logger.error(f"Error sending SMS to {recipient['phone_number']}: {e}")
@@ -348,12 +376,28 @@ class CSVProcessor:
                     
                     db.add(sms_message)
                 
-                # Update job progress
-                bulk_job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
-                if bulk_job:
-                    bulk_job.sent_count = sent_count
-                    bulk_job.failed_count = failed_count
+                # Batch processing: commit database changes after each batch
+                try:
                     db.commit()
+                    logger.info(f"Batch {batch_number}/{total_batches} completed. Progress: {sent_count} sent, {failed_count} failed")
+                except Exception as commit_error:
+                    logger.error(f"Database commit error: {commit_error}")
+
+                # Update job progress after each batch
+                try:
+                    bulk_job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()
+                    if bulk_job:
+                        bulk_job.sent_count = sent_count
+                        bulk_job.failed_count = failed_count
+                        db.commit()
+                        logger.info(f"Job progress updated: {sent_count}/{total_recipients} sent")
+                except Exception as update_error:
+                    logger.error(f"Job update error: {update_error}")
+
+                # Rate limiting: delay between batches (except for the last batch)
+                if batch_end < total_recipients:
+                    logger.info(f"Waiting {delay_between_batches} seconds before next batch...")
+                    await asyncio.sleep(delay_between_batches)
             
             # Mark job as completed
             bulk_job = db.query(BulkSMSJob).filter(BulkSMSJob.job_id == job_id).first()

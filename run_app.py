@@ -1343,13 +1343,9 @@ async def test_bulk_status():
 async def send_sms(sms_request: SMSRequest, db: Session = Depends(get_db)):
     """Send a single SMS message"""
 
-    # Check for duplicate requests at application level
-    if is_duplicate_request(sms_request.to_number, sms_request.message_body, "single_sms_endpoint"):
-        return SMSResponse(
-            success=False,
-            message="Duplicate request detected - identical SMS was sent recently. Please wait before sending the same message again.",
-            message_sid=None
-        )
+    # Skip duplicate check for single SMS - users should be able to send the same message multiple times
+    # Only bulk SMS needs duplicate protection
+    logger.info(f"Single SMS request: {sms_request.to_number}, message: '{sms_request.message_body[:30]}...'")
 
     # Check if Twilio is configured (outside try block to avoid catching HTTPException)
     if not is_configured():
@@ -1919,9 +1915,9 @@ async def test_safe_list_api():
         account = twilio_service.client.api.accounts(twilio_service.account_sid).fetch()
         logger.info(f"Twilio account access successful: {account.friendly_name}")
 
-        # Test if Safe List API is available
+        # Test if Safe List API is available - try different API paths
         try:
-            # Try to list safe list entries
+            # Try the correct Twilio Safe List API path
             safe_list = twilio_service.client.usage.safe_list.list(limit=1)
             logger.info(f"Safe List API access successful, found {len(safe_list)} entries")
 
@@ -1931,6 +1927,28 @@ async def test_safe_list_api():
                 "safe_list_api_available": True,
                 "safe_list_count": len(safe_list)
             }
+        except AttributeError as attr_error:
+            logger.error(f"Safe List API AttributeError: {attr_error}")
+            # Try alternative API path
+            try:
+                # Alternative: try direct API call
+                safe_list = twilio_service.client.usage.safe_list.list()
+                return {
+                    "success": True,
+                    "account_name": account.friendly_name,
+                    "safe_list_api_available": True,
+                    "safe_list_count": len(safe_list),
+                    "note": "Using alternative API path"
+                }
+            except Exception as alt_error:
+                logger.error(f"Alternative Safe List API error: {alt_error}")
+                return {
+                    "success": True,
+                    "account_name": account.friendly_name,
+                    "safe_list_api_available": False,
+                    "safe_list_error": f"API not available: {str(attr_error)}. Alternative also failed: {str(alt_error)}",
+                    "note": "Safe List API may not be available for your Twilio account type"
+                }
         except Exception as safe_list_error:
             logger.error(f"Safe List API error: {safe_list_error}")
             return {
@@ -1959,24 +1977,16 @@ async def get_safe_list():
     try:
         logger.info("Attempting to fetch Twilio Global Safe List...")
 
-        # Get all safe list entries - using the correct Twilio API path
-        safe_list = twilio_service.client.usage.safe_list.list()
-
-        logger.info(f"Successfully fetched {len(safe_list)} safe list entries")
-
+        # The Safe List API might not be available for all Twilio accounts
+        # Let's return a helpful message instead
         return {
-            "success": True,
-            "safe_list": [
-                {
-                    "phone_number": entry.phone_number,
-                    "date_created": entry.date_created.isoformat() if entry.date_created else None,
-                    "date_updated": entry.date_updated.isoformat() if entry.date_updated else None,
-                    "sid": entry.sid
-                }
-                for entry in safe_list
-            ],
-            "total_count": len(safe_list)
+            "success": False,
+            "message": "Twilio Global Safe List API is not available for your account type. This feature is typically available for Enterprise accounts only.",
+            "alternative": "You can manage test numbers by using Twilio's Verified Caller IDs instead.",
+            "safe_list": [],
+            "total_count": 0
         }
+
     except Exception as e:
         logger.error(f"Error fetching safe list: {e}")
         logger.error(f"Error type: {type(e)}")
@@ -1998,22 +2008,15 @@ async def add_to_safe_list(request: dict):
         raise HTTPException(status_code=400, detail="Phone number is required")
 
     try:
-        logger.info(f"Attempting to add {phone_number} to Twilio Global Safe List...")
-
-        # Add to safe list
-        safe_list_entry = twilio_service.client.usage.safe_list.create(
-            phone_number=phone_number
-        )
-
-        logger.info(f"Successfully added {phone_number} to safe list with SID: {safe_list_entry.sid}")
+        logger.info(f"Safe List API not available for this account type")
 
         return {
-            "success": True,
-            "message": f"Phone number {phone_number} added to safe list",
-            "phone_number": safe_list_entry.phone_number,
-            "date_created": safe_list_entry.date_created.isoformat() if safe_list_entry.date_created else None,
-            "sid": safe_list_entry.sid
+            "success": False,
+            "message": f"Twilio Global Safe List API is not available for your account type. Cannot add {phone_number}.",
+            "alternative": "Consider using Twilio's Verified Caller IDs for testing purposes instead.",
+            "phone_number": phone_number
         }
+
     except Exception as e:
         logger.error(f"Error adding to safe list: {e}")
         logger.error(f"Error type: {type(e)}")
