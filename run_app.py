@@ -164,14 +164,30 @@ csv_processor = None
 
 # Global request deduplication tracker
 import time
-_global_sms_requests = {}
+_global_sms_requests = {}  # Initialize empty dictionary
 ENABLE_APP_LEVEL_DEDUP = True  # Re-enabled to prevent bulk SMS duplicates
+
+# Ensure global variable is properly initialized
+def init_global_dedup():
+    """Initialize global deduplication tracker"""
+    global _global_sms_requests
+    if '_global_sms_requests' not in globals() or _global_sms_requests is None:
+        _global_sms_requests = {}
+    return _global_sms_requests
+
+# Initialize on module load
+init_global_dedup()
 
 def is_duplicate_request(phone_number, message_body, source="unknown"):
     """Check if this is a duplicate SMS request from any source"""
+    global _global_sms_requests
+
     if not ENABLE_APP_LEVEL_DEDUP:
         logger.info(f"🔓 APP-LEVEL DEDUP DISABLED: Allowing request from {source}")
         return False
+
+    # Ensure the global variable is initialized
+    _global_sms_requests = init_global_dedup()
 
     request_key = f"{phone_number.lower()}:{message_body.lower()}"
     current_time = time.time()
