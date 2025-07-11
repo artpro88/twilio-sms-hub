@@ -1903,6 +1903,50 @@ async def debug_csv_processing(file: UploadFile = File(...)):
         }
         return debug_info
 
+@app.get("/api/safelist/test")
+async def test_safe_list_api():
+    """Test Twilio Safe List API access"""
+    if not is_configured():
+        return {"success": False, "error": "Twilio not configured"}
+
+    if not twilio_service:
+        return {"success": False, "error": "Twilio service not available"}
+
+    try:
+        logger.info("Testing Twilio client and Safe List API access...")
+
+        # Test basic client access
+        account = twilio_service.client.api.accounts(twilio_service.account_sid).fetch()
+        logger.info(f"Twilio account access successful: {account.friendly_name}")
+
+        # Test if Safe List API is available
+        try:
+            # Try to list safe list entries
+            safe_list = twilio_service.client.usage.safe_list.list(limit=1)
+            logger.info(f"Safe List API access successful, found {len(safe_list)} entries")
+
+            return {
+                "success": True,
+                "account_name": account.friendly_name,
+                "safe_list_api_available": True,
+                "safe_list_count": len(safe_list)
+            }
+        except Exception as safe_list_error:
+            logger.error(f"Safe List API error: {safe_list_error}")
+            return {
+                "success": True,
+                "account_name": account.friendly_name,
+                "safe_list_api_available": False,
+                "safe_list_error": str(safe_list_error)
+            }
+
+    except Exception as e:
+        logger.error(f"Twilio client test error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 @app.get("/api/safelist")
 async def get_safe_list():
     """Get all phone numbers in the Twilio Global Safe List"""

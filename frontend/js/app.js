@@ -2,6 +2,7 @@
 
 class SMSApp {
     constructor() {
+        console.log('🚨 SMSApp constructor called');
         this.apiBase = '/api';
         this.currentStep = 1;
         this.csvData = null;
@@ -31,6 +32,7 @@ class SMSApp {
     }
 
     setupEventListeners() {
+        console.log('🔧 Setting up event listeners');
         // Navigation
         document.querySelectorAll('.nav-item').forEach(button => {
             button.addEventListener('click', (e) => {
@@ -102,8 +104,17 @@ class SMSApp {
         // Bulk SMS form
         const bulkForm = document.getElementById('bulk-sms-form');
         if (bulkForm) {
-            bulkForm.addEventListener('submit', (e) => {
+            console.log('📝 Adding bulk SMS form event listener');
+
+            // Remove any existing event listeners to prevent duplicates
+            const newForm = bulkForm.cloneNode(true);
+            bulkForm.parentNode.replaceChild(newForm, bulkForm);
+
+            newForm.addEventListener('submit', (e) => {
+                console.log('📤 Bulk SMS form submitted');
                 e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
                 this.sendBulkSMS();
             });
         }
@@ -579,9 +590,10 @@ class SMSApp {
     }
 
     async sendBulkSMS() {
+        console.log('🚀 sendBulkSMS method called');
         // Prevent double submissions
         if (this.bulkSmsInProgress) {
-            console.log('Bulk SMS already in progress, ignoring duplicate submission');
+            console.log('⚠️ Bulk SMS already in progress, ignoring duplicate submission');
             return;
         }
 
