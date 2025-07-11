@@ -7,6 +7,7 @@ class SMSApp {
         this.csvData = null;
         this.currentPage = 1;
         this.pageSize = 20;
+        this.bulkSmsInProgress = false;
         this.init();
     }
 
@@ -109,6 +110,9 @@ class SMSApp {
 
         // History controls
         this.setupHistoryListeners();
+
+        // Safe list controls
+        this.setupSafeListListeners();
 
         // Global refresh button
         const refreshButton = document.getElementById('refresh-data');
@@ -575,6 +579,12 @@ class SMSApp {
     }
 
     async sendBulkSMS() {
+        // Prevent double submissions
+        if (this.bulkSmsInProgress) {
+            console.log('Bulk SMS already in progress, ignoring duplicate submission');
+            return;
+        }
+
         const fileInput = document.getElementById('csv-file');
         const messageTemplate = document.getElementById('message-template').value;
 
@@ -583,6 +593,7 @@ class SMSApp {
             return;
         }
 
+        this.bulkSmsInProgress = true;
         this.showLoading();
 
         try {
@@ -625,6 +636,7 @@ class SMSApp {
         } catch (error) {
             this.showResult('bulk-result', `Error: ${error.message}`, false);
         } finally {
+            this.bulkSmsInProgress = false;
             this.hideLoading();
         }
     }
@@ -643,6 +655,159 @@ class SMSApp {
         } catch (error) {
             document.getElementById('account-balance').textContent = 'Balance: Error';
         }
+    }
+
+    setupSafeListListeners() {
+        // Add to safe list
+        const addButton = document.getElementById('add-to-safelist');
+        if (addButton) {
+            addButton.addEventListener('click', () => {
+                this.addToSafeList();
+            });
+        }
+
+        // Load safe list
+        const loadButton = document.getElementById('load-safelist');
+        if (loadButton) {
+            loadButton.addEventListener('click', () => {
+                this.loadSafeList();
+            });
+        }
+
+        // Enter key support for phone input
+        const phoneInput = document.getElementById('safelist-phone');
+        if (phoneInput) {
+            phoneInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    this.addToSafeList();
+                }
+            });
+        }
+    }
+
+    async addToSafeList() {
+        const phoneNumber = document.getElementById('safelist-phone').value.trim();
+
+        if (!phoneNumber) {
+            this.showSafeListResult('Please enter a phone number', false);
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.apiBase}/safelist/add`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    phone_number: phoneNumber
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.showSafeListResult(`✅ ${phoneNumber} added to safe list`, true);
+                document.getElementById('safelist-phone').value = '';
+                // Refresh the safe list
+                this.loadSafeList();
+            } else {
+                this.showSafeListResult(`❌ Failed to add: ${result.detail || result.message}`, false);
+            }
+        } catch (error) {
+            this.showSafeListResult(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    async loadSafeList() {
+        try {
+            const response = await fetch(`${this.apiBase}/safelist`);
+            const result = await response.json();
+
+            if (result.success) {
+                this.displaySafeList(result.safe_list);
+                this.showSafeListResult(`✅ Loaded ${result.total_count} safe list entries`, true);
+            } else {
+                this.showSafeListResult(`❌ Failed to load: ${result.detail || result.message}`, false);
+            }
+        } catch (error) {
+            this.showSafeListResult(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    displaySafeList(safeList) {
+        const container = document.getElementById('safelist-container');
+        const itemsContainer = document.getElementById('safelist-items');
+
+        if (safeList.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = 'block';
+        itemsContainer.innerHTML = '';
+
+        safeList.forEach(entry => {
+            const item = document.createElement('div');
+            item.className = 'list-group-item d-flex justify-content-between align-items-center';
+
+            const dateCreated = entry.date_created ? new Date(entry.date_created).toLocaleDateString() : 'Unknown';
+
+            item.innerHTML = `
+                <div>
+                    <strong>${entry.phone_number}</strong>
+                    <br>
+                    <small class="text-muted">Added: ${dateCreated}</small>
+                </div>
+                <button class="btn btn-sm btn-outline-danger" onclick="smsApp.removeFromSafeList('${entry.phone_number}')">
+                    <i class="fas fa-trash"></i> Remove
+                </button>
+            `;
+
+            itemsContainer.appendChild(item);
+        });
+    }
+
+    async removeFromSafeList(phoneNumber) {
+        if (!confirm(`Remove ${phoneNumber} from safe list?`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.apiBase}/safelist/remove`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    phone_number: phoneNumber
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.showSafeListResult(`✅ ${phoneNumber} removed from safe list`, true);
+                // Refresh the safe list
+                this.loadSafeList();
+            } else {
+                this.showSafeListResult(`❌ Failed to remove: ${result.detail || result.message}`, false);
+            }
+        } catch (error) {
+            this.showSafeListResult(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    showSafeListResult(message, isSuccess) {
+        const resultDiv = document.getElementById('safelist-result');
+        resultDiv.className = `alert ${isSuccess ? 'alert-success' : 'alert-danger'}`;
+        resultDiv.textContent = message;
+        resultDiv.style.display = 'block';
+
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+            resultDiv.style.display = 'none';
+        }, 5000);
     }
 
     async loadStats() {

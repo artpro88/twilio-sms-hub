@@ -1871,6 +1871,98 @@ async def debug_csv_processing(file: UploadFile = File(...)):
         }
         return debug_info
 
+@app.get("/api/safelist")
+async def get_safe_list():
+    """Get all phone numbers in the Twilio Global Safe List"""
+    if not is_configured():
+        raise HTTPException(status_code=400, detail="Twilio not configured")
+
+    if not twilio_service:
+        raise HTTPException(status_code=500, detail="Twilio service not available")
+
+    try:
+        # Get all safe list entries
+        safe_list = twilio_service.client.usage.safe_list.list()
+
+        return {
+            "success": True,
+            "safe_list": [
+                {
+                    "phone_number": entry.phone_number,
+                    "date_created": entry.date_created.isoformat() if entry.date_created else None,
+                    "date_updated": entry.date_updated.isoformat() if entry.date_updated else None
+                }
+                for entry in safe_list
+            ],
+            "total_count": len(safe_list)
+        }
+    except Exception as e:
+        logger.error(f"Error fetching safe list: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch safe list: {str(e)}")
+
+@app.post("/api/safelist/add")
+async def add_to_safe_list(request: dict):
+    """Add a phone number to the Twilio Global Safe List"""
+    if not is_configured():
+        raise HTTPException(status_code=400, detail="Twilio not configured")
+
+    if not twilio_service:
+        raise HTTPException(status_code=500, detail="Twilio service not available")
+
+    phone_number = request.get('phone_number')
+    if not phone_number:
+        raise HTTPException(status_code=400, detail="Phone number is required")
+
+    try:
+        # Add to safe list
+        safe_list_entry = twilio_service.client.usage.safe_list.create(
+            phone_number=phone_number
+        )
+
+        return {
+            "success": True,
+            "message": f"Phone number {phone_number} added to safe list",
+            "phone_number": safe_list_entry.phone_number,
+            "date_created": safe_list_entry.date_created.isoformat() if safe_list_entry.date_created else None
+        }
+    except Exception as e:
+        logger.error(f"Error adding to safe list: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to add to safe list: {str(e)}")
+
+@app.delete("/api/safelist/remove")
+async def remove_from_safe_list(request: dict):
+    """Remove a phone number from the Twilio Global Safe List"""
+    if not is_configured():
+        raise HTTPException(status_code=400, detail="Twilio not configured")
+
+    if not twilio_service:
+        raise HTTPException(status_code=500, detail="Twilio service not available")
+
+    phone_number = request.get('phone_number')
+    if not phone_number:
+        raise HTTPException(status_code=400, detail="Phone number is required")
+
+    try:
+        # Find and delete the safe list entry
+        safe_list_entries = twilio_service.client.usage.safe_list.list(phone_number=phone_number)
+
+        if not safe_list_entries:
+            raise HTTPException(status_code=404, detail=f"Phone number {phone_number} not found in safe list")
+
+        # Delete the entry (there should only be one)
+        for entry in safe_list_entries:
+            twilio_service.client.usage.safe_list(entry.sid).delete()
+
+        return {
+            "success": True,
+            "message": f"Phone number {phone_number} removed from safe list"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error removing from safe list: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to remove from safe list: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
 
