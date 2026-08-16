@@ -1,0 +1,16 @@
+# Core scraper dependencies
+anthropic>=0.69.0        # Claude API client (the "LLM" doing extraction)
+requests>=2.31.0         # requests fetch backend
+pydantic>=2.5.0          # typed schemas
+
+# Optional: JS-rendering fetch backend for bot-protected pages.
+# Chromium is preinstalled in Claude Code on the web; elsewhere run
+# `playwright install chromium` once.
+playwright>=1.40.0
+
+# Optional: only needed to run the FastAPI endpoint (api.py)
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# Dev
+pytest>=7.4.0
