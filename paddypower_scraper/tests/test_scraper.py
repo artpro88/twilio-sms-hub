@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from paddypower_scraper.config import ScraperConfig
+from paddypower_scraper.config import SITE_PRESETS, ScraperConfig
 from paddypower_scraper.extractor import LLMExtractor, fractional_to_decimal
 from paddypower_scraper.fetcher import FetchResult, clean_html
 from paddypower_scraper.scraper import PaddyPowerScraper, discover_links
@@ -26,6 +26,44 @@ FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "football_coupon.h
 def _load_fixture() -> str:
     with open(FIXTURE, "r", encoding="utf-8") as fh:
         return fh.read()
+
+
+# --- site presets ------------------------------------------------------------
+def test_default_site_is_paddypower():
+    config = ScraperConfig()
+    assert config.base_url == "https://www.paddypower.com"
+    assert "paddypower" in config.site_name.lower()
+    assert all("paddypower.com" in url for url in config.seed_urls)
+
+
+def test_betmgm_preset_targets_betmgm():
+    config = ScraperConfig(site="betmgm")
+    assert config.base_url == "https://sports.betmgm.co.uk"
+    assert "betmgm" in config.site_name.lower()
+    assert config.seed_urls  # non-empty
+    assert all("betmgm.co.uk" in url for url in config.seed_urls)
+
+
+def test_explicit_base_url_and_seeds_override_preset():
+    config = ScraperConfig(
+        site="betmgm",
+        base_url="https://example.com",
+        seed_urls=["https://example.com/a"],
+    )
+    assert config.base_url == "https://example.com"
+    assert config.seed_urls == ["https://example.com/a"]
+
+
+def test_extractor_prompt_reflects_site():
+    pp = LLMExtractor(ScraperConfig(site="paddypower"))
+    mgm = LLMExtractor(ScraperConfig(site="betmgm"))
+    assert "Paddy Power" in pp.system_prompt
+    assert "BetMGM" in mgm.system_prompt
+    assert "paddypower" not in mgm.system_prompt.lower()
+
+
+def test_known_presets_present():
+    assert {"paddypower", "betmgm"} <= set(SITE_PRESETS)
 
 
 # --- odds conversion ---------------------------------------------------------

@@ -8,7 +8,7 @@ Public API::
         events = scraper.scrape()
 """
 
-from .config import ScraperConfig
+from .config import SITE_PRESETS, ScraperConfig
 from .extractor import LLMExtractor, fractional_to_decimal
 from .fetcher import Fetcher, clean_html
 from .scraper import PaddyPowerScraper, discover_links
@@ -16,6 +16,7 @@ from .schemas import Event, Market, ScrapeResult, Selection
 
 __all__ = [
     "ScraperConfig",
+    "SITE_PRESETS",
     "PaddyPowerScraper",
     "LLMExtractor",
     "Fetcher",

@@ -47,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extract from a local HTML file instead of fetching (offline mode).",
     )
     p.add_argument(
+        "--site",
+        help="Target site preset: 'paddypower', 'betmgm', or any key in SITE_PRESETS.",
+    )
+    p.add_argument("--base-url", help="Override the target base URL for the run.")
+    p.add_argument(
         "--backend",
         choices=["requests", "playwright"],
         help="Fetch backend. 'playwright' renders JavaScript.",
@@ -80,7 +85,14 @@ def main(argv: List[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    config = ScraperConfig()
+    # `site` and `base_url` must be set at construction so the preset resolves
+    # in __post_init__; the rest can be mutated afterwards.
+    config_kwargs = {}
+    if args.site:
+        config_kwargs["site"] = args.site
+    if args.base_url:
+        config_kwargs["base_url"] = args.base_url
+    config = ScraperConfig(**config_kwargs)
     _apply_overrides(args, config)
 
     # Offline mode: extract straight from a saved HTML file.

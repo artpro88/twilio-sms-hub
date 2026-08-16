@@ -30,6 +30,8 @@ app = FastAPI(title="Paddy Power Pricing Scraper", version="0.1.0")
 class ScrapeRequest(BaseModel):
     urls: Optional[List[str]] = None
     crawl: bool = True
+    site: Optional[str] = None
+    base_url: Optional[str] = None
     backend: Optional[str] = None
     model: Optional[str] = None
     max_events_per_seed: Optional[int] = None
@@ -43,7 +45,12 @@ class ScrapeResponse(BaseModel):
 
 
 def _config_from(req: ScrapeRequest) -> ScraperConfig:
-    config = ScraperConfig()
+    kwargs = {}
+    if req.site:
+        kwargs["site"] = req.site
+    if req.base_url:
+        kwargs["base_url"] = req.base_url
+    config = ScraperConfig(**kwargs)
     if req.backend:
         config.fetch_backend = req.backend
     if req.model:

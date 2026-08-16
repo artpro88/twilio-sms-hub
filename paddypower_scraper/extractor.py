@@ -23,8 +23,8 @@ from .schemas import EVENT_EXTRACTION_SCHEMA, Event, ScrapeResult, Selection
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """\
-You are a precise sports-betting data extractor for paddypower.com pages.
+SYSTEM_PROMPT_TEMPLATE = """\
+You are a precise sports-betting data extractor for {site_name} pages.
 
 You are given the visible text of a betting page (a sport hub, a competition
 coupon, or a single event). Extract EVERY event, market, and selection with its
@@ -92,6 +92,12 @@ class LLMExtractor:
             self._client = anthropic.Anthropic()
         return self._client
 
+    @property
+    def system_prompt(self) -> str:
+        return SYSTEM_PROMPT_TEMPLATE.format(
+            site_name=self.config.site_name or "the sportsbook"
+        )
+
     def _build_user_message(self, source_url: str, content: str) -> str:
         trimmed = content[: self.config.max_content_chars]
         return (
@@ -111,7 +117,7 @@ class LLMExtractor:
         response = self.client.messages.create(
             model=self.config.model,
             max_tokens=self.config.max_tokens,
-            system=SYSTEM_PROMPT,
+            system=self.system_prompt,
             messages=[
                 {
                     "role": "user",
